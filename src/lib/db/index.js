@@ -34,6 +34,11 @@ export {
   getApiKeys, getApiKeyById, getApiKeyByKey, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
 
+// API key groups
+export {
+  getApiKeyGroups, getApiKeyGroupById, createApiKeyGroup, deleteApiKeyGroup, setApiKeyGroupActive,
+} from "./repos/apiKeyGroupsRepo.js";
+
 // Combos
 export {
   getCombos, getComboById, getComboByName,
@@ -79,7 +84,8 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, access: keyAccessFromColumns(r.accessRestricted, r.accessAllow) })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, access: keyAccessFromColumns(r.accessRestricted, r.accessAllow), groupId: r.groupId || null })),
+    apiKeyGroups: db.all(`SELECT * FROM apiKeyGroups`).map((r) => ({ id: r.id, name: r.name, createdAt: r.createdAt })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -108,6 +114,7 @@ export async function importDb(payload) {
     db.run(`DELETE FROM providerNodes`);
     db.run(`DELETE FROM proxyPools`);
     db.run(`DELETE FROM apiKeys`);
+    db.run(`DELETE FROM apiKeyGroups`);
     db.run(`DELETE FROM combos`);
     db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing')`);
 
@@ -137,6 +144,18 @@ export async function importDb(payload) {
         [id, isActive === false ? 0 : 1, testStatus || "unknown", stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
       );
     }
+    // Key groups: a backup without them (older version) restores every key
+    // ungrouped. A key pointing at a group the backup does not carry is
+    // restored ungrouped rather than left dangling.
+    const groupIds = new Set();
+    for (const g of payload.apiKeyGroups || []) {
+      if (!g || typeof g.id !== "string" || typeof g.name !== "string" || !g.name.trim()) continue;
+      db.run(
+        `INSERT OR REPLACE INTO apiKeyGroups(id, name, createdAt) VALUES(?, ?, ?)`,
+        [g.id, g.name.trim(), g.createdAt || new Date().toISOString()]
+      );
+      groupIds.add(g.id);
+    }
     for (const k of payload.apiKeys || []) {
       // Per-key access: a backup without `access` (older version) restores
       // unrestricted, exactly as before; a malformed `access` is refused.
@@ -148,8 +167,8 @@ export async function importDb(payload) {
       }
       const cols = keyAccessToColumns(access);
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), cols.accessRestricted, cols.accessAllow]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, groupId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), cols.accessRestricted, cols.accessAllow, groupIds.has(k.groupId) ? k.groupId : null]
       );
     }
     for (const c of payload.combos || []) {

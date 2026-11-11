@@ -19,9 +19,12 @@ import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
 import KeyAccessControls from "./components/KeyAccessControls";
+import KeyGroupsPanel from "./components/KeyGroupsPanel";
 import { validateCustomApiKey } from "@/shared/utils/customApiKey.js";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
+  const [keyGroups, setKeyGroups] = useState([]);
+  const [keysTab, setKeysTab] = useState("groups");
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
@@ -271,6 +274,10 @@ export default function APIPageClient({ machineId }) {
         } catch { /* fall through to empty render */ }
       }
       setKeys(existing);
+      try {
+        const groupsRes = await fetch("/api/keys/groups");
+        if (groupsRes.ok) setKeyGroups((await groupsRes.json()).groups || []);
+      } catch { /* groups are optional; the key list still renders */ }
     } catch (error) {
       console.log("Error fetching data:", error);
     } finally {
@@ -710,6 +717,93 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  // Key groups: organizing containers only, no access rules.
+  const handleCreateGroup = async (name) => {
+    try {
+      const res = await fetch("/api/keys/groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.group) {
+        setKeyGroups(prev => [...prev, data.group]);
+        return { ok: true };
+      }
+      return { ok: false, error: data.error || "Failed to create group" };
+    } catch (error) {
+      console.log("Error creating key group:", error);
+      return { ok: false, error: "Failed to create group" };
+    }
+  };
+
+  const handleDeleteGroup = (group) => {
+    const count = keys.filter(k => k.groupId === group.id).length;
+    setConfirmState({
+      title: "Delete Group",
+      message: `Delete group "${group.name}"?\n\n${count === 0 ? "It has no keys." : `Its ${count} key(s) are kept and become ungrouped.`}`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          const res = await fetch(`/api/keys/groups/${group.id}`, { method: "DELETE" });
+          if (res.ok) {
+            setKeyGroups(prev => prev.filter(g => g.id !== group.id));
+            setKeys(prev => prev.map(k => k.groupId === group.id ? { ...k, groupId: null } : k));
+          }
+        } catch (error) {
+          console.log("Error deleting key group:", error);
+        }
+      }
+    });
+  };
+
+  const handleSetKeyGroup = async (id, groupId) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId }),
+      });
+      if (res.ok) {
+        setKeys(prev => prev.map(k => k.id === id ? { ...k, groupId } : k));
+      }
+    } catch (error) {
+      console.log("Error updating key group:", error);
+    }
+  };
+
+  const handleToggleGroup = (group, isActive) => {
+    const apply = async () => {
+      try {
+        const res = await fetch(`/api/keys/groups/${group.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive }),
+        });
+        if (res.ok) {
+          setKeys(prev => prev.map(k => k.groupId === group.id ? { ...k, isActive } : k));
+        }
+      } catch (error) {
+        console.log("Error toggling key group:", error);
+      }
+    };
+    if (isActive) {
+      apply();
+      return;
+    }
+    const count = keys.filter(k => k.groupId === group.id).length;
+    setConfirmState({
+      title: "Pause Group Keys",
+      message: `Pause all ${count} key(s) in "${group.name}"?\n\nThese keys will stop working immediately but can be resumed later.`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        apply();
+      }
+    });
+  };
+
+  const keyGroupNameById = new Map(keyGroups.map(g => [g.id, g.name]));
+
   const maskKey = (fullKey) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
     return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
@@ -998,9 +1092,6 @@ export default function APIPageClient({ machineId }) {
             <span className="material-symbols-outlined text-primary">vpn_key</span>
             API Keys
           </h2>
-          <Button icon="add" onClick={() => setShowAddModal(true)}>
-            Create Key
-          </Button>
         </div>
 
         <div className="flex items-center justify-between pb-4 mb-4 border-b border-border">
@@ -1022,6 +1113,50 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
 
+        <div role="tablist" aria-label="API key views" className="flex gap-1 mb-4 border-b border-border">
+          {[
+            { id: "groups", label: "Groups", icon: "folder", count: keyGroups.length },
+            { id: "keys", label: "API Keys", icon: "vpn_key", count: keys.length },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`keys-tab-${tab.id}`}
+              aria-selected={keysTab === tab.id}
+              aria-controls={`keys-panel-${tab.id}`}
+              onClick={() => setKeysTab(tab.id)}
+              className={`flex items-center gap-1.5 px-3 py-2 -mb-px text-sm font-medium border-b-2 transition-colors ${keysTab === tab.id ? "border-primary text-primary" : "border-transparent text-text-muted hover:text-text-main"}`}
+            >
+              <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
+              {tab.label}
+              <span className="text-xs bg-surface-2 text-text-muted rounded-full px-2 py-0.5">{tab.count}</span>
+            </button>
+          ))}
+        </div>
+
+        {keysTab === "groups" && (
+          <div role="tabpanel" id="keys-panel-groups" aria-labelledby="keys-tab-groups">
+            <KeyGroupsPanel
+              groups={keyGroups}
+              keys={keys}
+              onCreate={handleCreateGroup}
+              onDelete={handleDeleteGroup}
+              onSetKeyGroup={handleSetKeyGroup}
+              onToggleGroup={handleToggleGroup}
+            />
+          </div>
+        )}
+
+        {keysTab === "keys" && (
+        <div role="tabpanel" id="keys-panel-keys" aria-labelledby="keys-tab-keys">
+        {keys.length > 0 && (
+          <div className="flex justify-end mb-2">
+            <Button icon="add" onClick={() => setShowAddModal(true)}>
+              Create Key
+            </Button>
+          </div>
+        )}
         {keys.length === 0 ? (
           <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
@@ -1086,6 +1221,14 @@ export default function APIPageClient({ machineId }) {
                   />
                 </div>
                 <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                  {keyGroupNameById.has(key.groupId) && (
+                    <span
+                      className="text-xs font-medium bg-primary/10 text-primary rounded-full px-2 py-0.5 max-w-[140px] truncate"
+                      title={`Group: ${keyGroupNameById.get(key.groupId)}`}
+                    >
+                      {keyGroupNameById.get(key.groupId)}
+                    </span>
+                  )}
                   <Toggle
                     size="sm"
                     checked={key.isActive ?? true}
@@ -1115,6 +1258,8 @@ export default function APIPageClient({ machineId }) {
               </div>
             ))}
           </div>
+        )}
+        </div>
         )}
       </Card>
 
