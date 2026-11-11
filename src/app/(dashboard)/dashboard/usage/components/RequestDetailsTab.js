@@ -112,8 +112,10 @@ export default function RequestDetailsTab() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [providers, setProviders] = useState([]);
   const [providerNameCache, setProviderNameCache] = useState(null);
+  const [apiKeys, setApiKeys] = useState([]);
   const [filters, setFilters] = useState({
     provider: "",
+    apiKeyId: "",
     startDate: "",
     endDate: ""
   });
@@ -129,6 +131,16 @@ export default function RequestDetailsTab() {
     } catch (error) {
       console.error("Failed to fetch providers:", error);
     }
+    // Keys for the caller filter: only id + name are kept in state.
+    try {
+      const res = await fetch("/api/keys");
+      if (res.ok) {
+        const data = await res.json();
+        setApiKeys((data.keys || []).map((k) => ({ id: k.id, name: k.name || k.id })));
+      }
+    } catch (error) {
+      console.error("Failed to fetch API keys:", error);
+    }
   }, []);
 
   const fetchDetails = useCallback(async () => {
@@ -139,6 +151,7 @@ export default function RequestDetailsTab() {
         pageSize: pagination.pageSize.toString()
       });
       if (filters.provider) params.append("provider", filters.provider);
+      if (filters.apiKeyId) params.append("apiKeyId", filters.apiKeyId);
       if (filters.startDate) params.append("startDate", filters.startDate);
       if (filters.endDate) params.append("endDate", filters.endDate);
 
@@ -176,13 +189,13 @@ export default function RequestDetailsTab() {
   };
 
   const handleClearFilters = () => {
-    setFilters({ provider: "", startDate: "", endDate: "" });
+    setFilters({ provider: "", apiKeyId: "", startDate: "", endDate: "" });
   };
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <Card padding="md">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div className="flex min-w-0 flex-col gap-2">
             <label htmlFor="provider-filter" className="text-sm font-medium text-text-main">Provider</label>
             <select
@@ -205,6 +218,29 @@ export default function RequestDetailsTab() {
             </select>
           </div>
           
+          <div className="flex min-w-0 flex-col gap-2">
+            <label htmlFor="api-key-filter" className="text-sm font-medium text-text-main">API Key</label>
+            <select
+              id="api-key-filter"
+              value={filters.apiKeyId}
+              onChange={(e) => {
+                setFilters({ ...filters, apiKeyId: e.target.value });
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
+              className={cn(
+                "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
+                "text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20",
+                "w-full min-w-0 cursor-pointer"
+              )}
+              style={{ colorScheme: 'auto' }}
+            >
+              <option value="">All API Keys</option>
+              {apiKeys.map((k) => (
+                <option key={k.id} value={k.id}>{k.name}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex min-w-0 flex-col gap-2">
             <label htmlFor="start-date-filter" className="text-sm font-medium text-text-main">Start Date</label>
             <input
@@ -238,7 +274,7 @@ export default function RequestDetailsTab() {
             <Button 
               variant="ghost" 
               onClick={handleClearFilters}
-              disabled={!filters.provider && !filters.startDate && !filters.endDate}
+              disabled={!filters.provider && !filters.apiKeyId && !filters.startDate && !filters.endDate}
               className="w-full"
             >
               Clear Filters
@@ -249,10 +285,11 @@ export default function RequestDetailsTab() {
 
       <Card padding="none">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px]">
+          <table className="w-full min-w-[1040px]">
             <thead>
               <tr className="border-b border-black/5 dark:border-white/5">
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Timestamp</th>
+                <th className="text-left p-4 text-sm font-semibold text-text-main">API Key</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Model</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Provider</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Input Tokens</th>
@@ -266,7 +303,7 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan="10" className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
                       <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                       Loading...
@@ -275,7 +312,7 @@ export default function RequestDetailsTab() {
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan="10" className="p-8 text-center text-text-muted">
                     No request details found
                   </td>
                 </tr>
@@ -287,6 +324,25 @@ export default function RequestDetailsTab() {
                   >
                     <td className="whitespace-nowrap p-4 text-sm text-text-main">
                       {new Date(detail.timestamp).toLocaleString()}
+                    </td>
+                    <td className="p-4 text-sm text-text-main">
+                      {detail.apiKey ? (
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 max-w-[240px]">
+                          <span
+                            className={cn("break-all font-medium", (detail.apiKey.unknown || detail.apiKey.deleted) && "font-mono text-xs text-text-muted")}
+                            title={detail.apiKey.unknown ? "Key not registered in this instance" : detail.apiKey.deleted ? "This key has been deleted" : detail.apiKey.name}
+                          >
+                            {detail.apiKey.name}
+                          </span>
+                          {detail.apiKey.group && (
+                            <span className="shrink-0 text-xs font-medium bg-primary/10 text-primary rounded-full px-2 py-0.5">
+                              {detail.apiKey.group}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-text-muted" title="No key recorded for this request">—</span>
+                      )}
                     </td>
                     <td className="max-w-[260px] truncate p-4 font-mono text-sm text-text-main">
                       {detail.model}

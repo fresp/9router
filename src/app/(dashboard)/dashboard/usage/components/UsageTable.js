@@ -35,16 +35,16 @@ function ValueCells({ item, viewMode, isSummary = false }) {
   if (viewMode === "tokens") {
     return (
       <>
-        <td className="px-6 py-3 text-right text-text-muted">
+        <td className="px-3 py-3 text-right text-text-muted">
           {isSummary && item.promptTokens === undefined ? "—" : fmt(item.promptTokens)}
         </td>
-        <td className="px-6 py-3 text-right text-text-muted">
+        <td className="px-3 py-3 text-right text-text-muted">
           {item.cachedTokens ? fmt(item.cachedTokens) : "—"}
         </td>
-        <td className="px-6 py-3 text-right text-text-muted">
+        <td className="px-3 py-3 text-right text-text-muted">
           {isSummary && item.completionTokens === undefined ? "—" : fmt(item.completionTokens)}
         </td>
-        <td className="px-6 py-3 text-right font-medium">
+        <td className="px-3 py-3 text-right font-medium">
           {fmt(item.totalTokens)}
         </td>
       </>
@@ -52,21 +52,49 @@ function ValueCells({ item, viewMode, isSummary = false }) {
   }
   return (
     <>
-      <td className="px-6 py-3 text-right text-text-muted">
+      <td className="px-3 py-3 text-right text-text-muted">
         {isSummary && item.inputCost === undefined ? "—" : fmtCost(item.inputCost)}
       </td>
-      <td className="px-6 py-3 text-right text-text-muted">
+      <td className="px-3 py-3 text-right text-text-muted">
         {item.cachedCost ? fmtCost(item.cachedCost) : "—"}
       </td>
-      <td className="px-6 py-3 text-right text-text-muted">
+      <td className="px-3 py-3 text-right text-text-muted">
         {isSummary && item.outputCost === undefined ? "—" : fmtCost(item.outputCost)}
       </td>
-      <td className="px-6 py-3 text-right font-medium text-warning">
+      <td className="px-3 py-3 text-right font-medium text-warning">
         {fmtCost(item.totalCost || item.cost)}
       </td>
     </>
   );
 }
+
+// Value a row contributes to the table total in the current view.
+const rowTotal = (item, viewMode) =>
+  viewMode === "tokens" ? (item.totalTokens || 0) : (item.totalCost || item.cost || 0);
+
+/**
+ * Share of the table total: a bar plus the percentage. The bar is the row's
+ * portion of everything listed, so the dominant rows stand out at a glance.
+ */
+function ShareCell({ value, total, muted = false }) {
+  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+  return (
+    <td className="pl-2 pr-6 py-3 text-right whitespace-nowrap">
+      <div className="flex items-center justify-end gap-2">
+        <span className="h-1.5 w-12 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+          <span className={`block h-full rounded-full ${muted ? "bg-primary/50" : "bg-primary"}`} style={{ width: `${pct}%` }} />
+        </span>
+        <span className="w-8 text-xs text-text-muted">{pct}%</span>
+      </div>
+    </td>
+  );
+}
+
+ShareCell.propTypes = {
+  value: PropTypes.number.isRequired,
+  total: PropTypes.number.isRequired,
+  muted: PropTypes.bool,
+};
 
 ValueCells.propTypes = {
   item: PropTypes.object.isRequired,
@@ -87,7 +115,7 @@ ValueCells.propTypes = {
  * @param {function} props.onToggleSort - Sort toggle handler
  * @param {string} props.viewMode - "tokens" or "costs"
  * @param {string} props.storageKey - localStorage key for expanded state
- * @param {function} props.renderGroupLabel - Render group summary first cell content
+ * @param {function} [props.renderGroupLabel] - Render group summary first cell content (defaults to the group key)
  * @param {function} props.renderDetailCells - Render detail row custom cells (before value cells)
  * @param {function} props.renderSummaryCells - Render summary row cells after group label (placeholder cols)
  * @param {string} props.emptyMessage - Empty state message
@@ -104,6 +132,7 @@ export default function UsageTable({
   storageKey,
   renderDetailCells,
   renderSummaryCells,
+  renderGroupLabel,
   emptyMessage,
 }) {
   const [expanded, setExpanded] = useState(new Set());
@@ -152,7 +181,11 @@ export default function UsageTable({
     ];
   }, [viewMode]);
 
-  const totalColSpan = columns.length + valueColumns.length;
+  const totalColSpan = columns.length + valueColumns.length + 1;
+  const grandTotal = useMemo(
+    () => groupedData.reduce((sum, group) => sum + rowTotal(group.summary, viewMode), 0),
+    [groupedData, viewMode]
+  );
 
   return (
     <Card className="overflow-hidden">
@@ -176,13 +209,19 @@ export default function UsageTable({
               {valueColumns.map((col) => (
                 <th
                   key={col.field}
-                  className="px-6 py-3 text-right cursor-pointer hover:bg-bg-subtle/50"
+                  className="px-3 py-3 text-right cursor-pointer hover:bg-bg-subtle/50"
                   onClick={() => onToggleSort(tableType, col.field)}
                 >
                   {col.label}{" "}
                   <SortIcon field={col.field} currentSort={sortBy} currentOrder={sortOrder} />
                 </th>
               ))}
+              <th
+                className="pl-2 pr-6 py-3 text-right"
+                title={viewMode === "tokens" ? "Share of total tokens in this table" : "Share of total cost in this table"}
+              >
+                Share
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -198,13 +237,16 @@ export default function UsageTable({
                       <span className={`material-symbols-outlined text-[18px] text-text-muted transition-transform ${expanded.has(group.groupKey) ? "rotate-90" : ""}`}>
                         chevron_right
                       </span>
-                      <span className={`font-medium transition-colors ${group.summary.pending > 0 ? "text-primary" : ""}`}>
-                        {group.groupKey}
-                      </span>
+                      {renderGroupLabel ? renderGroupLabel(group) : (
+                        <span className={`font-medium transition-colors ${group.summary.pending > 0 ? "text-primary" : ""}`}>
+                          {group.groupKey}
+                        </span>
+                      )}
                     </div>
                   </td>
                   {renderSummaryCells(group)}
                   <ValueCells item={group.summary} viewMode={viewMode} isSummary />
+                  <ShareCell value={rowTotal(group.summary, viewMode)} total={grandTotal} />
                 </tr>
                 {/* Detail rows */}
                 {expanded.has(group.groupKey) && group.items.map((item) => (
@@ -214,6 +256,7 @@ export default function UsageTable({
                   >
                     {renderDetailCells(item)}
                     <ValueCells item={item} viewMode={viewMode} />
+                    <ShareCell value={rowTotal(item, viewMode)} total={grandTotal} muted />
                   </tr>
                 ))}
               </Fragment>
@@ -248,6 +291,7 @@ UsageTable.propTypes = {
   storageKey: PropTypes.string.isRequired,
   renderDetailCells: PropTypes.func.isRequired,
   renderSummaryCells: PropTypes.func.isRequired,
+  renderGroupLabel: PropTypes.func,
   emptyMessage: PropTypes.string.isRequired,
 };
 
