@@ -20,11 +20,14 @@ import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
 import KeyAccessControls from "./components/KeyAccessControls";
 import KeyGroupsPanel from "./components/KeyGroupsPanel";
+import KeyGroupFilter, { filterKeysByGroup } from "./components/KeyGroupFilter";
 import { validateCustomApiKey } from "@/shared/utils/customApiKey.js";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [keyGroups, setKeyGroups] = useState([]);
   const [keysTab, setKeysTab] = useState("groups");
+  // API Keys tab filter: "all", "none" (ungrouped) or a group id.
+  const [keysGroupFilter, setKeysGroupFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
@@ -802,7 +805,28 @@ export default function APIPageClient({ machineId }) {
     });
   };
 
+  // Overwrite the access of every key in a group (bulk edit from the Groups tab).
+  const handleSetGroupAccess = async (group, access) => {
+    try {
+      const res = await fetch(`/api/keys/groups/${group.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.access) {
+        setKeys(prev => prev.map(k => k.groupId === group.id ? { ...k, access: data.access } : k));
+        return { ok: true };
+      }
+      return { ok: false, error: data.error || "Failed to update access" };
+    } catch (error) {
+      console.log("Error updating group access:", error);
+      return { ok: false, error: "Failed to update access" };
+    }
+  };
+
   const keyGroupNameById = new Map(keyGroups.map(g => [g.id, g.name]));
+  const visibleKeyList = filterKeysByGroup(keys, keyGroups, keysGroupFilter);
 
   const maskKey = (fullKey) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
@@ -1144,6 +1168,7 @@ export default function APIPageClient({ machineId }) {
               onDelete={handleDeleteGroup}
               onSetKeyGroup={handleSetKeyGroup}
               onToggleGroup={handleToggleGroup}
+              onSetGroupAccess={handleSetGroupAccess}
             />
           </div>
         )}
@@ -1151,7 +1176,8 @@ export default function APIPageClient({ machineId }) {
         {keysTab === "keys" && (
         <div role="tabpanel" id="keys-panel-keys" aria-labelledby="keys-tab-keys">
         {keys.length > 0 && (
-          <div className="flex justify-end mb-2">
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <KeyGroupFilter groups={keyGroups} keys={keys} value={keysGroupFilter} onChange={setKeysGroupFilter} />
             <Button icon="add" onClick={() => setShowAddModal(true)}>
               Create Key
             </Button>
@@ -1170,7 +1196,10 @@ export default function APIPageClient({ machineId }) {
           </div>
         ) : (
           <div className="flex flex-col">
-            {keys.map((key) => (
+            {visibleKeyList.length === 0 && (
+              <p className="text-sm text-text-muted py-6 text-center">No keys in this group.</p>
+            )}
+            {visibleKeyList.map((key) => (
               <div
                 key={key.id}
                 className={`group flex items-start justify-between gap-3 py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
