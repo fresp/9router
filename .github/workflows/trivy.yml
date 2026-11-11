@@ -1,0 +1,119 @@
+name: Trivy Security Scan
+
+# Watches the repository and the Docker image against the Trivy vulnerability
+# database. Findings land in the Security tab (code scanning); the job fails on
+# fixable HIGH/CRITICAL issues, so the daily run doubles as an alert when a new
+# advisory is published for something already shipped.
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trivy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned by digest: Trivy tags and the trivy-action tags were force-pushed in
+  # the March 2026 supply-chain compromise. Bump version and digest together.
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+  TRIVY_GATE_SEVERITY: HIGH,CRITICAL
+
+jobs:
+  repo:
+    name: Repository (deps, secrets, misconfig)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # Lockfiles are not committed, and Trivy resolves npm dependencies from
+      # them. Resolve without running any install script.
+      - name: Resolve dependency lockfiles
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm --prefix cli install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Scan repository (SARIF)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/src" -w /src "$TRIVY_IMAGE" \
+            fs --scanners vuln,secret,misconfig \
+            --format sarif --output trivy-repo.sarif .
+
+      - name: Upload results to code scanning
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-repo.sarif
+          category: trivy-repo
+
+      - name: Fail on fixable HIGH/CRITICAL findings
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/src" -w /src "$TRIVY_IMAGE" \
+            fs --scanners vuln,secret,misconfig \
+            --severity "$TRIVY_GATE_SEVERITY" --ignore-unfixed \
+            --skip-version-check --exit-code 1 .
+
+  image:
+    name: Docker image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: docker build --build-arg APP_VERSION=trivy-scan --tag 9router:trivy .
+
+      - name: Scan image (SARIF)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/src" -w /src \
+            -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
+            image --scanners vuln \
+            --format sarif --output trivy-image.sarif 9router:trivy
+
+      - name: Upload results to code scanning
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Fail on fixable HIGH/CRITICAL findings
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/src" -w /src \
+            -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
+            image --scanners vuln \
+            --severity "$TRIVY_GATE_SEVERITY" --ignore-unfixed \
+            --skip-version-check --exit-code 1 9router:trivy

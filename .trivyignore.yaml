@@ -1,0 +1,14 @@
+# Accepted Trivy findings. Every entry needs a statement explaining why.
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - Dockerfile
+    statement: >-
+      The image starts as root only so /entrypoint.sh can chown the mounted data
+      volume; it then execs the server as the unprivileged `node` user via su-exec.
+
+secrets:
+  - id: gitlab-pat
+    paths:
+      - src/shared/components/GitLabAuthModal.js
+    statement: Input placeholder text made of filler characters, not a credential.
