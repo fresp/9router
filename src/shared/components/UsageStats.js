@@ -20,6 +20,7 @@ import dynamic from "next/dynamic";
 const ProviderTopology = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/ProviderTopology"), { ssr: false });
 const UsageChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/UsageChart"), { ssr: false });
 const ProviderBarChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/ProviderBarChart"), { ssr: false });
+const ApiKeyUsageChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/ApiKeyUsageChart"), { ssr: false });
 const TopModelsChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/TopModelsChart"), { ssr: false });
 
 function timeAgo(timestamp) {
@@ -639,6 +640,8 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
             </button>
           </div>
         </div>
+        {/* Per-key usage over time, only on the API Key breakdown */}
+        {!loading && tableView === "apiKey" && <ApiKeyUsageChart period={period} />}
         {loading ? spinner : activeTableConfig && (
           <UsageTable
             title=""

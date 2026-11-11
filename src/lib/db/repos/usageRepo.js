@@ -852,6 +852,101 @@ export async function getChartData(period = "7d") {
   });
 }
 
+// Same buckets as getChartData, split per caller API key (top keys + "Other").
+export async function getApiKeyChartData(period = "7d") {
+  const db = await getAdapter();
+  const { LOCAL_KEY, newKeyBuckets, buildApiKeySeries } = await import("../helpers/apiKeyChart.js");
+
+  const apiKeyMap = {};
+  try {
+    const { getApiKeys } = await import("./apiKeysRepo.js");
+    const groupNames = {};
+    try {
+      const { getApiKeyGroups } = await import("./apiKeyGroupsRepo.js");
+      for (const g of await getApiKeyGroups()) groupNames[g.id] = g.name;
+    } catch {}
+    for (const k of await getApiKeys()) {
+      if (k.key) apiKeyMap[k.key.trim()] = { id: k.id, name: k.name, groupName: groupNames[k.groupId] || null };
+    }
+  } catch {}
+
+  const perKey = new Map();
+  let labels = [];
+  const bucketsFor = (rawKey) => {
+    const key = rawKey && typeof rawKey === "string" ? rawKey.trim() : LOCAL_KEY;
+    if (!perKey.has(key)) perKey.set(key, newKeyBuckets(labels.length));
+    return perKey.get(key);
+  };
+
+  if (period === "today" || period === "24h") {
+    const bucketCount = 24;
+    const bucketMs = 3600000;
+    let startTime;
+    if (period === "today") {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      startTime = startOfDay.getTime();
+    } else {
+      startTime = Date.now() - bucketCount * bucketMs;
+    }
+    const endTime = startTime + bucketCount * bucketMs;
+    labels = Array.from({ length: bucketCount }, (_, i) =>
+      new Date(startTime + i * bucketMs).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }));
+
+    const rows = db.all(
+      `SELECT timestamp, apiKey, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
+      [new Date(startTime).toISOString()]
+    );
+    for (const r of rows) {
+      const t = new Date(r.timestamp).getTime();
+      if (t < startTime || t > endTime) continue;
+      const idx = Math.min(Math.floor((t - startTime) / bucketMs), bucketCount - 1);
+      const b = bucketsFor(r.apiKey);
+      b.tokens[idx] += (r.promptTokens || 0) + (r.completionTokens || 0);
+      b.cost[idx] += r.cost || 0;
+      b.requests[idx] += 1;
+    }
+  } else {
+    const dateKeyOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let dayRows;
+    let bucketCount;
+    if (period === "all") {
+      dayRows = loadDaysInRange(db, null);
+      if (!dayRows.length) return { labels: [], series: [], keyCount: 0 };
+      const earliest = new Date(dayRows[0].dateKey + "T00:00:00");
+      bucketCount = Math.max(1, Math.round((today - earliest) / 86400000) + 1);
+    } else {
+      bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+      dayRows = loadDaysInRange(db, bucketCount);
+    }
+
+    const indexByDate = {};
+    labels = Array.from({ length: bucketCount }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (bucketCount - 1 - i));
+      indexByDate[dateKeyOf(d)] = i;
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    });
+
+    for (const r of dayRows) {
+      const idx = indexByDate[r.dateKey];
+      if (idx === undefined) continue;
+      const day = parseJson(r.data, {}) || {};
+      for (const ak of Object.values(day.byApiKey || {})) {
+        const b = bucketsFor(ak.apiKey);
+        b.tokens[idx] += (ak.promptTokens || 0) + (ak.completionTokens || 0);
+        b.cost[idx] += ak.cost || 0;
+        b.requests[idx] += ak.requests || 0;
+      }
+    }
+  }
+
+  return buildApiKeySeries(perKey, labels, (rawKey) => apiKeyMap[rawKey] || null, maskApiKey);
+}
+
 function formatLogDate(date = new Date()) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;

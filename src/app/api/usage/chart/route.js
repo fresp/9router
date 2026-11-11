@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getChartData } from "@/lib/usageDb";
+import { getChartData, getApiKeyChartData } from "@/lib/usageDb";
 
 const VALID_PERIODS = new Set(["today", "24h", "7d", "30d", "60d", "all"]);
 
@@ -12,7 +12,13 @@ export async function GET(request) {
       return NextResponse.json({ error: "Invalid period" }, { status: 400 });
     }
 
-    const data = await getChartData(period);
+    // groupBy=apiKey → one series per caller API key (identified by id/masked key only)
+    const groupBy = searchParams.get("groupBy");
+    if (groupBy && groupBy !== "apiKey") {
+      return NextResponse.json({ error: "Invalid groupBy" }, { status: 400 });
+    }
+
+    const data = groupBy === "apiKey" ? await getApiKeyChartData(period) : await getChartData(period);
     return NextResponse.json(data);
   } catch (error) {
     console.error("[API] Failed to get chart data:", error);
