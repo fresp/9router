@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getRequestDetails } from "@/lib/usageDb";
+import { getApiKeys, getApiKeyGroups } from "@/lib/localDb";
 
 /**
  * GET /api/usage/request-details
- * Query parameters: page, pageSize (1-100), provider, model, connectionId, status, startDate, endDate
+ * Query parameters: page, pageSize (1-100), provider, model, connectionId, status, apiKeyId, startDate, endDate
  */
 export async function GET(request) {
   try {
@@ -17,6 +18,7 @@ export async function GET(request) {
     const model = searchParams.get("model");
     const connectionId = searchParams.get("connectionId");
     const status = searchParams.get("status");
+    const apiKeyId = searchParams.get("apiKeyId");
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
     
@@ -43,6 +45,7 @@ export async function GET(request) {
     if (model) filter.model = model;
     if (connectionId) filter.connectionId = connectionId;
     if (status) filter.status = status;
+    if (apiKeyId) filter.apiKeyId = apiKeyId;
     if (startDate) filter.startDate = startDate;
     if (endDate) filter.endDate = endDate;
     
@@ -53,8 +56,31 @@ export async function GET(request) {
     // wholesale lets any dashboard-authenticated user (or, if requireLogin is
     // disabled, anyone) read every user's conversation history. Keep the
     // metadata (model, tokens, latency, status) but drop message content.
+    // Caller key: name and group as they are now; the stored name snapshot
+    // covers a key deleted since. Only id/name/group leave the server.
+    const [keys, groups] = await Promise.all([
+      getApiKeys().catch(() => []),
+      getApiKeyGroups().catch(() => []),
+    ]);
+    const keyById = new Map(keys.map((k) => [k.id, k]));
+    const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
+    const describeCaller = (d) => {
+      if (d.apiKeyId) {
+        const key = keyById.get(d.apiKeyId);
+        return {
+          id: d.apiKeyId,
+          name: key?.name || d.apiKeyName || "Deleted key",
+          group: key ? groupNameById.get(key.groupId) || null : null,
+          deleted: !key,
+        };
+      }
+      if (d.apiKeyMasked) return { id: null, name: d.apiKeyMasked, group: null, unknown: true };
+      return null;
+    };
+
     const redactedDetails = (result.details || []).map((d) => {
-      const redacted = { ...d };
+      const { apiKeyId: _id, apiKeyName: _name, apiKeyMasked: _masked, ...rest } = d;
+      const redacted = { ...rest, apiKey: describeCaller(d) };
       for (const key of ["request", "providerRequest", "providerResponse", "response"]) {
         if (redacted[key] !== undefined) {
           redacted[key] = { redacted: true };

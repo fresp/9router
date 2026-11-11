@@ -12,6 +12,7 @@ function isLLMProvider(id) {
 }
 import Badge from "./Badge";
 import Card from "./Card";
+import SegmentedControl from "./SegmentedControl";
 import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/OverviewCards";
 import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
 import dynamic from "next/dynamic";
@@ -224,11 +225,11 @@ const COMBO_COLUMNS = [
 ];
 
 const TABLE_OPTIONS = [
-  { value: "model", label: "Usage by Model" },
-  { value: "account", label: "Usage by Account" },
-  { value: "apiKey", label: "Usage by API Key" },
-  { value: "endpoint", label: "Usage by Endpoint" },
-  { value: "combo", label: "Usage by Combo" },
+  { value: "model", label: "Model", countKey: "byModel", groupField: "rawModel" },
+  { value: "account", label: "Account", countKey: "byAccount", groupField: "accountName" },
+  { value: "apiKey", label: "API Key", countKey: "byApiKey", groupField: "keyName" },
+  { value: "endpoint", label: "Endpoint", countKey: "byEndpoint", groupField: "endpoint" },
+  { value: "combo", label: "Combo", countKey: "byCombo", groupField: "combo" },
 ];
 
 const PERIODS = [
@@ -250,7 +251,9 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
-  const [tableView, setTableView] = useState("model");
+  // Breakdown tab lives in the URL (?view=apiKey) so it survives reloads and can be linked.
+  const viewParam = searchParams.get("view");
+  const tableView = TABLE_OPTIONS.some((o) => o.value === viewParam) ? viewParam : "model";
   const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
   const [periodLocal, setPeriodLocal] = useState("today");
@@ -346,6 +349,20 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     return () => es.close();
   }, []);
 
+  const setTableView = useCallback((value) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", value);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }, [searchParams, router]);
+
+  // Tabs show how many rows each breakdown has for the selected period.
+  const tabOptions = useMemo(() => TABLE_OPTIONS.map((opt) => {
+    const entries = stats?.[opt.countKey];
+    if (!entries) return { value: opt.value, label: opt.label };
+    const count = new Set(Object.values(entries).map((item) => getGroupKey(item, opt.groupField))).size;
+    return { value: opt.value, label: `${opt.label} (${count})` };
+  }), [stats]);
+
   const toggleSort = useCallback((tableType, field) => {
     const params = new URLSearchParams(searchParams.toString());
     if (params.get("sortBy") === field) {
@@ -426,6 +443,29 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           groupedData: groupDataByKey(sortData(stats.byApiKey, {}, sortBy, sortOrder), "keyName"),
           storageKey: "usage-stats:expanded-apikeys",
           emptyMessage: "No API key usage recorded yet.",
+          // Name on its own line, masked key below it, group label beside:
+          // two keys sharing a name stay distinguishable.
+          renderGroupLabel: (group) => {
+            const first = group.items[0] || {};
+            return (
+              <div className="flex flex-col items-start gap-0.5 min-w-0">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="font-medium">{first.keyName || group.groupKey}</span>
+                  {first.keyGroup && (
+                    <span
+                      className="text-xs font-medium bg-primary/10 text-primary rounded-full px-2 py-0.5 whitespace-nowrap"
+                      title={`Group: ${first.keyGroup}`}
+                    >
+                      {first.keyGroup}
+                    </span>
+                  )}
+                </span>
+                {first.apiKeyMasked && first.apiKeyMasked !== first.keyName && (
+                  <span className="font-mono text-xs text-text-muted whitespace-nowrap">{first.apiKeyMasked}</span>
+                )}
+              </div>
+            );
+          },
           renderSummaryCells: (group) => (
             <>
               <td className="px-6 py-3 text-text-muted">—</td>
@@ -577,16 +617,13 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       {/* Table with dropdown selector */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <select
+          <SegmentedControl
+            options={tabOptions}
             value={tableView}
-            onChange={(e) => setTableView(e.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-main focus:outline-none focus:ring-2 focus:ring-primary/50 sm:w-auto"
-            style={{ colorScheme: 'auto' }}
-          >
-            {TABLE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+            onChange={setTableView}
+            size="sm"
+            className="w-full sm:w-auto"
+          />
           <div className="grid grid-cols-2 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex">
             <button
               onClick={() => setViewMode("costs")}
@@ -614,6 +651,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
             viewMode={viewMode}
             storageKey={activeTableConfig.storageKey}
             renderSummaryCells={activeTableConfig.renderSummaryCells}
+            renderGroupLabel={activeTableConfig.renderGroupLabel}
             renderDetailCells={activeTableConfig.renderDetailCells}
             emptyMessage={activeTableConfig.emptyMessage}
           />

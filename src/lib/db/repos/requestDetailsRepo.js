@@ -68,7 +68,7 @@ function sanitizeHeaders(headers) {
   return sanitized;
 }
 
-export const __test__ = { sanitizeHeaders };
+export const __test__ = { sanitizeHeaders, flush: () => flushToDatabase() };
 
 function generateDetailId(model) {
   const timestamp = new Date().toISOString();
@@ -85,6 +85,37 @@ function truncateField(obj, maxSize) {
   return obj || {};
 }
 
+// Who sent each buffered request. The client key itself is never persisted:
+// a known key is stored as its id plus a name snapshot, an unknown one (login
+// not required, or the key was deleted meanwhile) only as a masked string.
+async function resolveCallers(items) {
+  const callers = new Map();
+  let getApiKeyByKey = null;
+  let maskApiKey = null;
+  for (const item of items) {
+    const raw = item.apiKey;
+    if (typeof raw !== "string" || !raw || callers.has(raw)) continue;
+    let record = null;
+    try {
+      if (!getApiKeyByKey) ({ getApiKeyByKey } = await import("./apiKeysRepo.js"));
+      record = await getApiKeyByKey(raw);
+    } catch {}
+    if (record) {
+      callers.set(raw, { apiKeyId: record.id, apiKeyName: record.name || null });
+      continue;
+    }
+    // Same masking the usage stats use. If it cannot be loaded, record no
+    // caller at all rather than risk writing the key.
+    try {
+      if (!maskApiKey) ({ maskApiKey } = await import("./usageRepo.js"));
+      callers.set(raw, { apiKeyMasked: maskApiKey(raw) });
+    } catch {
+      callers.set(raw, {});
+    }
+  }
+  return callers;
+}
+
 async function flushToDatabase() {
   if (isFlushing) return;
   if (writeBuffer.length === 0) return;
@@ -95,6 +126,7 @@ async function flushToDatabase() {
       const items = writeBuffer.splice(0, writeBuffer.length);
       const db = await getAdapter();
       const config = await getObservabilityConfig();
+      const callers = await resolveCallers(items);
 
       db.transaction(() => {
         for (const item of items) {
@@ -116,11 +148,12 @@ async function flushToDatabase() {
             providerResponse: truncateField(item.providerResponse, config.maxJsonSize),
             response: truncateField(item.response, config.maxJsonSize),
             pxpipe: item.pxpipe || undefined,
+            ...(callers.get(item.apiKey) || {}),
           };
 
           db.run(
-            `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data`,
-            [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record)]
+            `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data, apiKeyId) VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data, apiKeyId = excluded.apiKeyId`,
+            [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record), record.apiKeyId || null]
           );
         }
 
@@ -168,6 +201,7 @@ export async function getRequestDetails(filter = {}) {
   if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
   if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
   if (filter.status) { conds.push("status = ?"); params.push(filter.status); }
+  if (filter.apiKeyId) { conds.push("apiKeyId = ?"); params.push(filter.apiKeyId); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
   if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
 
