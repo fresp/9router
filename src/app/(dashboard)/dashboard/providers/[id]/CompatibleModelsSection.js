@@ -4,10 +4,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
-import { getAliasesForModel } from "@/shared/utils/modelAlias";
-import ModelAliasEditor from "./ModelAliasEditor";
-
-function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting, aliases, onAddAlias, onRemoveAlias }) {
+function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
   const borderColor = testStatus === "ok"
     ? "border-green-500/40"
     : testStatus === "error"
@@ -62,11 +59,6 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
             </div>
           )}
         </div>
-        {onAddAlias && (
-          <div className="mt-2">
-            <ModelAliasEditor aliases={aliases} onAdd={onAddAlias} onRemove={onRemoveAlias} copied={copied} onCopy={onCopy} />
-          </div>
-        )}
       </div>
       <button
         onClick={onDeleteAlias}
@@ -79,7 +71,7 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
   );
 }
 
-export default function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, customModels, copied, onCopy, onSetAlias, onDeleteAlias, onAddCustomModel, onDeleteCustomModel, connections, isAnthropic }) {
+export default function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, customModels, copied, onCopy, onDeleteAlias, onAddCustomModel, onDeleteCustomModel, connections, isAnthropic }) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -172,7 +164,6 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-muted">
         Add {isAnthropic ? "Anthropic" : "OpenAI"}-compatible models manually or import them from the /models endpoint.
-        Give a model an alias to let clients call it by a short name instead of <code className="font-mono">{providerDisplayAlias}/model</code>.
       </p>
 
       <div className="flex items-end gap-2 flex-wrap">
@@ -215,9 +206,6 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
               onTest={connections.length > 0 ? () => handleTestModel(id) : undefined}
               testStatus={modelTestResults[id]}
               isTesting={testingModelId === id}
-              aliases={getAliasesForModel(modelAliases, id, [providerStorageAlias, providerDisplayAlias])}
-              onAddAlias={onSetAlias ? (name) => onSetAlias(id, name, providerStorageAlias) : undefined}
-              onRemoveAlias={onDeleteAlias}
             />
           ))}
         </div>
@@ -233,7 +221,6 @@ CompatibleModelsSection.propTypes = {
   customModels: PropTypes.arrayOf(PropTypes.object),
   copied: PropTypes.string,
   onCopy: PropTypes.func.isRequired,
-  onSetAlias: PropTypes.func,
   onDeleteAlias: PropTypes.func.isRequired,
   onAddCustomModel: PropTypes.func.isRequired,
   onDeleteCustomModel: PropTypes.func.isRequired,

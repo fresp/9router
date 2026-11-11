@@ -10,7 +10,6 @@ import {
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
-import { getModelInfo } from "@/sse/services/model.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels, routableQoderModels } from "open-sse/services/qoderModels.js";
@@ -389,8 +388,6 @@ export async function buildModelsList(kindFilter, options = {}) {
   }
 
   const models = [];
-  // `providerId/modelId` → listed entry, for publishing aliases of listed models.
-  const listedByTarget = new Map();
   const combosByName = new Map(
     combos.filter((c) => typeof c?.name === "string").map((c) => [c.name, c]),
   );
@@ -626,7 +623,6 @@ export async function buildModelsList(kindFilter, options = {}) {
           if (Array.isArray(thinkingLevels) && thinkingLevels.length > 0) model.thinking_levels = thinkingLevels;
         }
         models.push(model);
-        listedByTarget.set(`${providerId}/${modelId}`, model);
       }
 
       // Web search/fetch — provider IS the model, expose as {alias}/search and/or {alias}/fetch with explicit kind
@@ -647,26 +643,6 @@ export async function buildModelsList(kindFilter, options = {}) {
           owned_by: outputAlias,
         });
       }
-    }
-  }
-
-  // User aliases: a bare name that routes to one listed model. Published so a
-  // client that fills its picker from this endpoint can select the alias; it
-  // inherits the target's metadata. An alias whose target is not listed
-  // (no active connection, disabled, filtered kind) is not routable — skip it.
-  if (kindFilter.includes(LLM_KIND) && listedByTarget.size > 0) {
-    for (const aliasName of Object.keys(modelAliases || {})) {
-      if (aliasName.includes("/") || combosByName.has(aliasName)) continue;
-      let info = null;
-      try {
-        info = await getModelInfo(aliasName);
-      } catch {
-        continue;
-      }
-      if (!info?.provider || !info.model) continue;
-      const target = listedByTarget.get(`${info.provider}/${info.model}`);
-      if (!target) continue;
-      models.push({ ...target, id: aliasName, alias_of: target.id });
     }
   }
 

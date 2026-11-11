@@ -14,7 +14,6 @@ import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import { applyQoderModelNames, getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
-import { getAliasesForModel } from "@/shared/utils/modelAlias";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
@@ -548,19 +547,14 @@ export default function ProviderDetailPage() {
       });
       if (res.ok) {
         await fetchAliases();
-        return null;
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to set alias");
       }
-      const data = await res.json().catch(() => ({}));
-      return data.error || "Failed to set alias";
     } catch (error) {
       console.log("Error setting alias:", error);
-      return "Failed to set alias";
     }
   };
-
-  // Aliases pointing at a model of this provider, under any prefix that routes to it.
-  const aliasesFor = (modelId) =>
-    getAliasesForModel(modelAliases, modelId, [providerStorageAlias, providerId, providerDisplayAlias]);
 
   const handleDeleteAlias = async (alias) => {
     try {
@@ -1237,11 +1231,10 @@ export default function ProviderDetailPage() {
             key={`${model.source}-${model.fullModel}`}
             model={{ id: model.id, name: model.name }}
             fullModel={`${providerDisplayAlias}/${model.id}`}
-            aliases={aliasesFor(model.id)}
-            onAddAlias={(alias) => handleSetAlias(model.id, alias, providerStorageAlias)}
-            onRemoveAlias={handleDeleteAlias}
+            alias={model.alias}
             copied={copied}
             onCopy={copy}
+            onSetAlias={() => {}}
             onDeleteAlias={() => {
               if (model.source === "custom") {
                 handleDeleteCustomModel(model.id, "llm", providerStorageAlias);
@@ -1260,16 +1253,21 @@ export default function ProviderDetailPage() {
         ))}
 
         {displayModels.map((model) => {
+          const fullModel = `${providerStorageAlias}/${model.id}`;
+          const oldFormatModel = `${providerId}/${model.id}`;
+          const existingAlias = Object.entries(modelAliases).find(
+            ([, m]) => m === fullModel || m === oldFormatModel
+          )?.[0];
           return (
             <ModelRow
               key={model.id}
               model={model}
               fullModel={`${providerDisplayAlias}/${model.id}`}
-              aliases={aliasesFor(model.id)}
-              onAddAlias={(alias) => handleSetAlias(model.id, alias, providerStorageAlias)}
-              onRemoveAlias={handleDeleteAlias}
+              alias={existingAlias}
               copied={copied}
               onCopy={copy}
+              onSetAlias={(alias) => handleSetAlias(model.id, alias, providerStorageAlias)}
+              onDeleteAlias={() => handleDeleteAlias(existingAlias)}
               testStatus={modelTestResults[model.id]}
               onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
               isTesting={testingModelIds.has(model.id)}
