@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { deleteApiKey, getApiKeyById, getApiKeyGroupById, updateApiKey } from "@/lib/localDb";
 import { validateKeyAccessInput } from "@/shared/utils/keyAccess.js";
 
 // GET /api/keys/[id] - Get single key
@@ -22,7 +22,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, access } = body;
+    const { isActive, access, groupId } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -35,6 +35,17 @@ export async function PUT(request, { params }) {
       const checked = validateKeyAccessInput(access);
       if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
       updateData.access = checked.value;
+    }
+    // Group membership: null removes the key from its group.
+    if (groupId !== undefined) {
+      if (groupId === null) {
+        updateData.groupId = null;
+      } else {
+        if (typeof groupId !== "string" || !(await getApiKeyGroupById(groupId))) {
+          return NextResponse.json({ error: "Group not found" }, { status: 400 });
+        }
+        updateData.groupId = groupId;
+      }
     }
 
     const updated = await updateApiKey(id, updateData);
