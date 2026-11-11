@@ -1,7 +1,8 @@
 import PropTypes from "prop-types";
 import { CapacityBadges } from "@/shared/components";
+import ModelAliasEditor from "./ModelAliasEditor";
 
-export default function ModelRow({ model, fullModel, alias, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting, onDisable, caps, thinkingSuffix }) {
+export default function ModelRow({ model, fullModel, aliases, onAddAlias, onRemoveAlias, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting, onDisable, caps, thinkingSuffix }) {
   const displayModel = thinkingSuffix ? `${fullModel}(${thinkingSuffix})` : fullModel;
   const borderColor = testStatus === "ok"
     ? "border-green-500/40"
@@ -30,6 +31,9 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
             {model.name && <span className="break-all sm:truncate text-[9px] italic text-text-muted/70">{model.name}</span>}
             <CapacityBadges caps={caps} colorOverride="text-text-muted/70" size={12} />
           </span>
+          {onAddAlias && (
+            <ModelAliasEditor aliases={aliases || []} onAdd={onAddAlias} onRemove={onRemoveAlias} copied={copied} onCopy={onCopy} />
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           {onTest && (
@@ -89,7 +93,9 @@ ModelRow.propTypes = {
     id: PropTypes.string.isRequired,
   }).isRequired,
   fullModel: PropTypes.string.isRequired,
-  alias: PropTypes.string,
+  aliases: PropTypes.arrayOf(PropTypes.string),
+  onAddAlias: PropTypes.func,
+  onRemoveAlias: PropTypes.func,
   copied: PropTypes.string,
   onCopy: PropTypes.func.isRequired,
   testStatus: PropTypes.oneOf(["ok", "error"]),
