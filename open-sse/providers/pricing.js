@@ -5,6 +5,11 @@
 //   2. FREE_MODEL_NAMESPACES               — upstream bills these at $0
 //   3. MODEL_PRICING[model]               — canonical model price (provider-agnostic)
 //   4. PATTERN_PRICING                    — glob pattern match (e.g. "codex-*")
+//
+// A trailing context marker ("gpt-6-sol[1m]") is not part of the priced model
+// id: after the exact provider override, lookups run on the bare id.
+
+import { stripModelContextMarker } from "../utils/modelMarkers.js";
 
 /**
  * Namespaces upstream meters at $0. A free model must never inherit a paid
@@ -428,6 +433,17 @@ export function getPricingForModel(provider, model) {
   // 1. Provider-specific override
   if (provider && PROVIDER_PRICING[provider]?.[model]) {
     return PROVIDER_PRICING[provider][model];
+  }
+
+  // Extended-context ids ("gpt-6-sol[1m]") bill as their base model. Strip the
+  // marker before any further lookup, otherwise the id misses MODEL_PRICING and
+  // either goes unpriced or lands on a wrong generic pattern.
+  const { model: bareModel, contextMarker } = stripModelContextMarker(model);
+  if (contextMarker) {
+    model = bareModel;
+    if (provider && PROVIDER_PRICING[provider]?.[model]) {
+      return PROVIDER_PRICING[provider][model];
+    }
   }
 
   // 2. Free namespaces bill $0 regardless of the model name behind them.

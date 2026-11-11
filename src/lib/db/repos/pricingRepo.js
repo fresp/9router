@@ -52,6 +52,10 @@ export async function getPricingForModel(provider, model) {
   if (!model) return null;
   const userPricing = await getUserPricing();
   if (provider && userPricing[provider]?.[model]) return userPricing[provider][model];
+  // A user rate set on the base id also covers its "[1m]" extended-context variant.
+  const { stripModelContextMarker } = await import("open-sse/utils/modelMarkers.js");
+  const { model: bareModel } = stripModelContextMarker(model);
+  if (provider && bareModel !== model && userPricing[provider]?.[bareModel]) return userPricing[provider][bareModel];
   const { getPricingForModel: resolveConst } = await import("open-sse/providers/pricing.js");
   return resolveConst(provider, model);
 }
