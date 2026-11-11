@@ -520,3 +520,34 @@ export function calculateCostFromTokens(tokens, pricing) {
 
   return cost;
 }
+
+/**
+ * Split an already-computed cost into input / cached / output parts, weighted
+ * by what each token class costs at the model's rates. The parts always sum to
+ * `cost`, so a breakdown stays consistent with the stored total even when the
+ * rates changed after the request was recorded.
+ *
+ * Cache-creation tokens count as input, reasoning tokens as output.
+ * Returns null when there is nothing to weigh by (no pricing, or all-zero rates).
+ */
+export function splitCostByRate(cost, tokens, pricing) {
+  if (!cost || !tokens || !pricing) return null;
+
+  const inputTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
+  const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
+  const cacheCreationTokens = tokens.cache_creation_input_tokens || 0;
+  const nonCachedInput = Math.max(0, inputTokens - cachedTokens - cacheCreationTokens);
+  const outputTokens = tokens.completion_tokens || tokens.output_tokens || 0;
+  const reasoningTokens = tokens.reasoning_tokens || 0;
+
+  const input = nonCachedInput * (pricing.input || 0)
+    + cacheCreationTokens * (pricing.cache_creation || pricing.input || 0);
+  const cached = cachedTokens * (pricing.cached || pricing.input || 0);
+  const output = outputTokens * (pricing.output || 0)
+    + reasoningTokens * (pricing.reasoning || pricing.output || 0);
+
+  const total = input + cached + output;
+  if (!(total > 0)) return null;
+  const scale = cost / total;
+  return { inputCost: input * scale, cachedCost: cached * scale, outputCost: output * scale };
+}

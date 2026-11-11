@@ -95,15 +95,17 @@ function sortData(dataMap, pendingMap = {}, sortBy, sortOrder) {
     .map(([key, data]) => {
       const totalTokens = (data.promptTokens || 0) + (data.completionTokens || 0);
       const totalCost = data.cost || 0;
-      // ponytail: cost split is a token-share allocation of the (rate-accurate)
-      // server total, not a per-rate recompute. cached is a subset of prompt, so
-      // peel it out of the input share. Upgrade to a stored per-component cost
-      // breakdown if exact cached-rate cost display is needed.
+      // Cost split: the server sends a per-rate split (inputCost / cachedCost /
+      // outputCost) for everything it could price that way. Whatever part of the
+      // total it does not cover (rollups recorded before the split existed) is
+      // spread by token share, so the three columns always sum to the total.
       const cachedTokens = data.cachedTokens || 0;
       const nonCachedInput = Math.max(0, (data.promptTokens || 0) - cachedTokens);
-      const inputCost = totalTokens > 0 ? nonCachedInput * (totalCost / totalTokens) : 0;
-      const cachedCost = totalTokens > 0 ? cachedTokens * (totalCost / totalTokens) : 0;
-      const outputCost = totalTokens > 0 ? (data.completionTokens || 0) * (totalCost / totalTokens) : 0;
+      const rated = (data.inputCost || 0) + (data.cachedCost || 0) + (data.outputCost || 0);
+      const perToken = totalTokens > 0 ? Math.max(0, totalCost - rated) / totalTokens : 0;
+      const inputCost = (data.inputCost || 0) + nonCachedInput * perToken;
+      const cachedCost = (data.cachedCost || 0) + cachedTokens * perToken;
+      const outputCost = (data.outputCost || 0) + (data.completionTokens || 0) * perToken;
       return { ...data, key, totalTokens, totalCost, inputCost, cachedCost, outputCost, pending: pendingMap[key] || 0 };
     })
     .sort((a, b) => {
@@ -258,6 +260,25 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
   const [periodLocal, setPeriodLocal] = useState("today");
+  // Cost backfill: bumping refreshKey refetches the stats afterwards.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [recalc, setRecalc] = useState({ busy: false, message: "" });
+
+  const recalculateCosts = useCallback(async () => {
+    if (!window.confirm("Recalculate costs?\n\nRequests recorded at $0 whose model has pricing now get a cost, and daily totals are rebuilt from the request history. Costs already recorded are not changed.")) return;
+    setRecalc({ busy: true, message: "" });
+    try {
+      const res = await fetch("/api/usage/recalculate-costs", { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) throw new Error(data?.error || "Request failed");
+      const skipped = data.daysSkipped ? `, ${data.daysSkipped} days skipped (incomplete history)` : "";
+      const added = (data.costAdded || 0).toFixed(2);
+      setRecalc({ busy: false, message: `${data.rowsRepriced} requests repriced, +$${added}${skipped}` });
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      setRecalc({ busy: false, message: `Recalculation failed: ${e.message}` });
+    }
+  }, []);
   const isInitialLoad = useRef(true);
   const hasLoadedStats = useRef(false);
   const period = periodProp ?? periodLocal;
@@ -319,7 +340,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         setLoading(false);
         setFetching(false);
       });
-  }, [period]);
+  }, [period, refreshKey]);
 
   // SSE connection - real-time updates for activeRequests + recentRequests only
   useEffect(() => {
@@ -625,6 +646,17 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
             size="sm"
             className="w-full sm:w-auto"
           />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            {recalc.message && <span className="text-xs text-text-muted" role="status">{recalc.message}</span>}
+            <button
+              onClick={recalculateCosts}
+              disabled={recalc.busy}
+              title="Fill in costs for requests recorded at $0 whose model has pricing now"
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-text-muted transition-colors hover:bg-bg-hover hover:text-text disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-[16px] ${recalc.busy ? "animate-spin" : ""}`}>{recalc.busy ? "progress_activity" : "calculate"}</span>
+              {recalc.busy ? "Recalculating..." : "Recalculate costs"}
+            </button>
           <div className="grid grid-cols-2 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex">
             <button
               onClick={() => setViewMode("costs")}
@@ -638,6 +670,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
             >
               Tokens
             </button>
+          </div>
           </div>
         </div>
         {/* Per-key usage over time, only on the API Key breakdown */}
