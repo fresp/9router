@@ -172,6 +172,58 @@ describe("/api/keys/groups routes", () => {
   });
 });
 
+describe("bulk group access", () => {
+  const ACCESS = { restricted: true, allow: ["oca-code", "cx/gpt-5"] };
+
+  it("overwrites access for the group's own keys only", async () => {
+    const { db } = await boot();
+    const lab = await db.createApiKeyGroup("Lab");
+    const a = await db.createApiKey("a", "machine-1");
+    const b = await db.createApiKey("b", "machine-1");
+    const outside = await db.createApiKey("outside", "machine-1");
+    await db.updateApiKey(a.id, { groupId: lab.id, access: { restricted: true, allow: ["old/model"] } });
+    await db.updateApiKey(b.id, { groupId: lab.id, isActive: false });
+    await db.updateApiKey(outside.id, { access: { restricted: true, allow: ["keep/me"] } });
+
+    expect(await db.setApiKeyGroupAccess(lab.id, ACCESS)).toBe(2);
+    expect((await db.getApiKeyById(a.id)).access).toEqual(ACCESS);
+    expect((await db.getApiKeyById(b.id)).access).toEqual(ACCESS);
+    expect((await db.getApiKeyById(b.id)).isActive).toBe(false);
+    expect((await db.getApiKeyById(outside.id)).access).toEqual({ restricted: true, allow: ["keep/me"] });
+
+    await db.setApiKeyGroupAccess(lab.id, { restricted: false, allow: [] });
+    expect((await db.getApiKeyById(a.id)).access).toEqual({ restricted: false, allow: [] });
+  });
+
+  it("a key that joins later keeps its own access", async () => {
+    const { db } = await boot();
+    const lab = await db.createApiKeyGroup("Lab");
+    await db.setApiKeyGroupAccess(lab.id, ACCESS);
+    const late = await db.createApiKey("late", "machine-1");
+    expect((await db.updateApiKey(late.id, { groupId: lab.id })).access).toEqual({ restricted: false, allow: [] });
+  });
+
+  it("PUT validates access and the group, and leaves keys alone on a bad request", async () => {
+    const { db, groupRoute } = await boot();
+    const lab = await db.createApiKeyGroup("Lab");
+    const key = await db.createApiKey("k", "machine-1");
+    await db.updateApiKey(key.id, { groupId: lab.id, access: { restricted: true, allow: ["old/model"] } });
+
+    expect((await groupRoute.PUT(req("PUT", {}), ctx(lab.id))).status).toBe(400);
+    expect((await groupRoute.PUT(req("PUT", { access: { restricted: "yes" } }), ctx(lab.id))).status).toBe(400);
+    expect((await groupRoute.PUT(req("PUT", { access: { restricted: true, allow: [1] } }), ctx(lab.id))).status).toBe(400);
+    expect((await groupRoute.PUT(req("PUT", { access: ACCESS, isActive: "no" }), ctx(lab.id))).status).toBe(400);
+    expect((await groupRoute.PUT(req("PUT", { access: ACCESS }), ctx("missing"))).status).toBe(404);
+    expect((await db.getApiKeyById(key.id)).access).toEqual({ restricted: true, allow: ["old/model"] });
+
+    const res = await groupRoute.PUT(req("PUT", { access: { restricted: true, allow: [" oca-code ", "OCA-CODE", "cx/gpt-5"] } }), ctx(lab.id));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ updated: 1, access: ACCESS });
+    expect((await db.getApiKeyById(key.id)).access).toEqual(ACCESS);
+    expect(await db.validateApiKey(key.key)).toBe(true);
+  });
+});
+
 describe("key groups: schema upgrade and backup", () => {
   it("upgrades a DB from the previous schema with every key ungrouped", async () => {
     // apiKeys as it was before groupId, stamped at schema version 2.

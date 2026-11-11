@@ -1,18 +1,54 @@
 "use client";
 
 // "Groups" tab on the Endpoint page. A group is only an organizing container
-// for API keys: it carries no access rules and never affects how a /v1 request
-// is authenticated or routed. A key belongs to at most one group, so adding a
-// key that already has a group moves it.
+// for API keys: it carries no access rules of its own and never affects how a
+// /v1 request is authenticated or routed. Its bulk actions (enable/pause, set
+// access) write to the member keys. A key belongs to at most one group, so
+// adding a key that already has a group moves it.
 import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Input, Toggle } from "@/shared/components";
 import { validateKeyGroupName, KEY_GROUP_NAME_MAX_LENGTH } from "@/shared/utils/apiKeyGroup.js";
+import KeyAccessControls from "./KeyAccessControls";
 
-export default function KeyGroupsPanel({ groups, keys, onCreate, onDelete, onSetKeyGroup, onToggleGroup }) {
+const allowSignature = (access) =>
+  access?.restricted ? (access.allow || []).map((e) => e.toLowerCase()).sort().join("\n") : null;
+
+/**
+ * Summarize the access of a group's keys. `uniform` is true when every key has
+ * the same settings. `access` is the starting point for the bulk editor: the
+ * shared settings, or for a mixed group only what every restricted key already
+ * allows, so applying an untouched draft can narrow access but never widen it.
+ */
+function summarizeGroupAccess(members) {
+  const signatures = new Set(members.map((k) => allowSignature(k.access)));
+  const restricted = members.filter((k) => k.access?.restricted);
+  if (signatures.size <= 1) {
+    const first = members[0]?.access;
+    const access = first?.restricted ? { restricted: true, allow: [...(first.allow || [])] } : { restricted: false, allow: [] };
+    return { uniform: true, access, label: access.restricted ? `Restricted · ${access.allow.length}` : "Unrestricted" };
+  }
+  const common = (restricted[0]?.access.allow || []).filter((entry) =>
+    restricted.every((k) => k.access.allow.some((e) => e.toLowerCase() === entry.toLowerCase()))
+  );
+  return { uniform: false, access: { restricted: true, allow: common }, label: "Mixed access" };
+}
+
+export default function KeyGroupsPanel({ groups, keys, onCreate, onDelete, onSetKeyGroup, onToggleGroup, onSetGroupAccess }) {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState(() => new Set());
+  // Bulk access editor: one group at a time, nothing is saved until Apply.
+  const [editing, setEditing] = useState(null);
+  const [applying, setApplying] = useState(false);
+
+  const applyAccess = async (group) => {
+    setApplying(true);
+    const result = await onSetGroupAccess(group, editing.access);
+    setApplying(false);
+    if (result?.ok) setEditing(null);
+    else setEditing((prev) => (prev ? { ...prev, error: result?.error || "Failed to update access" } : prev));
+  };
 
   const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
 
@@ -72,6 +108,8 @@ export default function KeyGroupsPanel({ groups, keys, onCreate, onDelete, onSet
             const members = keys.filter((k) => k.groupId === group.id);
             const others = keys.filter((k) => k.groupId !== group.id);
             const open = !collapsed.has(group.id);
+            const summary = summarizeGroupAccess(members);
+            const draft = editing?.groupId === group.id ? editing : null;
             return (
               <div
                 key={group.id}
@@ -94,6 +132,20 @@ export default function KeyGroupsPanel({ groups, keys, onCreate, onDelete, onSet
                     {members.length} {members.length === 1 ? "key" : "keys"}
                   </span>
                   {members.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setEditing(draft ? null : { groupId: group.id, access: summary.access, error: "" })}
+                      aria-expanded={Boolean(draft)}
+                      title={`Set access for all keys in ${group.name}`}
+                      className={`flex items-center gap-1 text-xs rounded-full px-2 py-0.5 transition-colors hover:text-primary ${summary.uniform ? "text-text-muted bg-surface-2" : "text-orange-500 bg-orange-500/10"}`}
+                    >
+                      <span className="material-symbols-outlined text-[14px]">
+                        {summary.uniform && !summary.access.restricted ? "lock_open" : "lock"}
+                      </span>
+                      {summary.label}
+                    </button>
+                  )}
+                  {members.length > 0 && (
                     <span className="flex items-center gap-1.5 text-xs text-text-muted">
                       All
                       <Toggle
@@ -114,6 +166,33 @@ export default function KeyGroupsPanel({ groups, keys, onCreate, onDelete, onSet
                     <span className="material-symbols-outlined text-[18px]">delete</span>
                   </button>
                 </div>
+
+                {draft && members.length > 0 && (
+                  <div className="px-3 pb-3 border-t border-border-subtle" data-testid="key-group-access">
+                    <p className="text-xs text-text-muted mt-2">
+                      Access for all {members.length} {members.length === 1 ? "key" : "keys"} in this group. Nothing changes until you apply.
+                    </p>
+                    {!summary.uniform && (
+                      <p className="text-xs text-orange-500 mt-1">
+                        These keys currently have different access. Applying overwrites every key; the list starts from what all restricted keys already share.
+                      </p>
+                    )}
+                    <KeyAccessControls
+                      apiKey={{ id: group.id, name: group.name, access: draft.access }}
+                      onChange={(access) => setEditing({ groupId: group.id, access, error: "" })}
+                      onRequestRestrict={() => setEditing({ groupId: group.id, access: { restricted: true, allow: draft.access.allow }, error: "" })}
+                    />
+                    {draft.error && <p className="text-xs text-red-500 mt-2">{draft.error}</p>}
+                    <div className="flex items-center gap-2 mt-3">
+                      <Button size="sm" onClick={() => applyAccess(group)} disabled={applying}>
+                        Apply to {members.length} {members.length === 1 ? "key" : "keys"}
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => setEditing(null)} disabled={applying}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {open && (
                   <div className="flex flex-wrap items-center gap-1.5 px-3 py-3 border-t border-border-subtle">
@@ -172,4 +251,5 @@ KeyGroupsPanel.propTypes = {
   onDelete: PropTypes.func.isRequired,
   onSetKeyGroup: PropTypes.func.isRequired,
   onToggleGroup: PropTypes.func.isRequired,
+  onSetGroupAccess: PropTypes.func.isRequired,
 };

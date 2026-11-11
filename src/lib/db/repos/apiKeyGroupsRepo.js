@@ -1,7 +1,9 @@
 // API key groups: organizing containers for API keys. A key belongs to at most
-// one group (apiKeys.groupId). Groups carry no access rules.
+// one group (apiKeys.groupId). Groups carry no access rules of their own: the
+// bulk actions below write to the member keys, and /v1 only ever reads the key.
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import { keyAccessToColumns } from "@/shared/utils/keyAccess.js";
 
 // Thrown when a group name is already taken (case-insensitive).
 export const API_KEY_GROUP_EXISTS = "API_KEY_GROUP_EXISTS";
@@ -63,6 +65,22 @@ export async function setApiKeyGroupActive(id, isActive) {
   let count = 0;
   db.transaction(() => {
     db.run(`UPDATE apiKeys SET isActive = ? WHERE groupId = ?`, [isActive ? 1 : 0, id]);
+    count = db.get(`SELECT COUNT(*) AS n FROM apiKeys WHERE groupId = ?`, [id])?.n ?? 0;
+  });
+  return count;
+}
+
+/**
+ * Overwrite the access settings of every key currently in a group with
+ * `access` (already validated by the caller). A one-time write: keys that join
+ * the group later are not changed. Returns the number of keys in the group.
+ */
+export async function setApiKeyGroupAccess(id, access) {
+  const db = await getAdapter();
+  const cols = keyAccessToColumns(access);
+  let count = 0;
+  db.transaction(() => {
+    db.run(`UPDATE apiKeys SET accessRestricted = ?, accessAllow = ? WHERE groupId = ?`, [cols.accessRestricted, cols.accessAllow, id]);
     count = db.get(`SELECT COUNT(*) AS n FROM apiKeys WHERE groupId = ?`, [id])?.n ?? 0;
   });
   return count;

@@ -36,7 +36,7 @@ export {
 
 // API key groups
 export {
-  getApiKeyGroups, getApiKeyGroupById, createApiKeyGroup, deleteApiKeyGroup, setApiKeyGroupActive,
+  getApiKeyGroups, getApiKeyGroupById, createApiKeyGroup, deleteApiKeyGroup, setApiKeyGroupActive, setApiKeyGroupAccess,
 } from "./repos/apiKeyGroupsRepo.js";
 
 // Combos
