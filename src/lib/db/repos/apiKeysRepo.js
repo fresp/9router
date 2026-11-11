@@ -36,25 +36,47 @@ export async function getApiKeyByKey(key) {
   return rowToKey(row);
 }
 
-export async function createApiKey(name, machineId) {
+// Thrown by createApiKey when a custom key is already taken.
+export const API_KEY_EXISTS = "API_KEY_EXISTS";
+
+/**
+ * Create an API key. With `customKey` (already validated by the caller) that
+ * exact string is stored; otherwise a random machine-bound key is generated.
+ */
+export async function createApiKey(name, machineId, customKey) {
   if (!machineId) throw new Error("machineId is required");
   const db = await getAdapter();
-  const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
-  const result = generateApiKeyWithMachine(machineId);
+  let key = customKey;
+  if (!key) {
+    const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
+    key = generateApiKeyWithMachine(machineId).key;
+  }
   const apiKey = {
     id: uuidv4(),
     name,
-    key: result.key,
+    key,
     machineId,
     isActive: true,
     createdAt: new Date().toISOString(),
     access: { restricted: false, allow: [] },
   };
   const cols = keyAccessToColumns(KEY_ACCESS_UNRESTRICTED);
-  db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, cols.accessRestricted, cols.accessAllow]
-  );
+  let exists = false;
+  db.transaction(() => {
+    if (db.get(`SELECT id FROM apiKeys WHERE key = ?`, [apiKey.key])) {
+      exists = true;
+      return;
+    }
+    db.run(
+      `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+      [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, cols.accessRestricted, cols.accessAllow]
+    );
+  });
+  if (exists) {
+    const err = new Error("API key already exists");
+    err.code = API_KEY_EXISTS;
+    throw err;
+  }
   return apiKey;
 }
 
