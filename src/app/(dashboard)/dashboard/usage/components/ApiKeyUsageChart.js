@@ -21,6 +21,9 @@ const fmtTokens = (n) => {
 const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
 const fmtRequests = (n) => new Intl.NumberFormat().format(n || 0);
 
+// Hourly buckets carry their start time; label them in the viewer's timezone.
+const fmtHour = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+
 const VIEW_MODES = [
   { value: "tokens", label: "Tokens", formatter: fmtTokens },
   { value: "requests", label: "Requests", formatter: fmtRequests },
@@ -59,10 +62,12 @@ export default function ApiKeyUsageChart({ period = "7d" }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/usage/chart?period=${period}&groupBy=apiKey`)
+    fetch(`/api/usage/chart?period=${period}&groupBy=apiKey&tzOffset=${new Date().getTimezoneOffset()}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
-        if (!cancelled && json && Array.isArray(json.series)) setData(json);
+        if (!cancelled && json && Array.isArray(json.series)) {
+          setData(Array.isArray(json.timestamps) ? { ...json, labels: json.timestamps.map(fmtHour) } : json);
+        }
       })
       .catch((e) => console.error("Failed to fetch API key chart data:", e))
       .finally(() => {

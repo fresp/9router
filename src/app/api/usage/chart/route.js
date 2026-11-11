@@ -18,7 +18,12 @@ export async function GET(request) {
       return NextResponse.json({ error: "Invalid groupBy" }, { status: 400 });
     }
 
-    const data = groupBy === "apiKey" ? await getApiKeyChartData(period) : await getChartData(period);
+    // Viewer's Date#getTimezoneOffset, so "today" starts at their midnight rather than the server's.
+    const tzRaw = searchParams.get("tzOffset");
+    const tzOffsetMinutes = tzRaw !== null && /^-?\d{1,3}$/.test(tzRaw) && Math.abs(Number(tzRaw)) <= 840 ? Number(tzRaw) : undefined;
+    const opts = { tzOffsetMinutes };
+
+    const data = groupBy === "apiKey" ? await getApiKeyChartData(period, opts) : await getChartData(period, opts);
     return NextResponse.json(data);
   } catch (error) {
     console.error("[API] Failed to get chart data:", error);
