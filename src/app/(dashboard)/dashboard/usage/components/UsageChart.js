@@ -22,6 +22,9 @@ const fmtTokens = (n) => {
 const fmtCost = (n) => `$${(n || 0).toFixed(4)}`;
 const fmtRequests = (n) => String(n || 0);
 
+// Hourly buckets carry their start time; label them in the viewer's timezone.
+const fmtHour = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+
 const VIEW_MODES = [
   { value: "tokens", label: "Tokens" },
   { value: "requests", label: "Requests" },
@@ -42,10 +45,10 @@ export default function UsageChart({ period = "7d" }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/usage/chart?period=${period}`);
+      const res = await fetch(`/api/usage/chart?period=${period}&tzOffset=${new Date().getTimezoneOffset()}`);
       if (res.ok) {
         const json = await res.json();
-        setData(json);
+        setData(Array.isArray(json) ? json.map((d) => (d.ts ? { ...d, label: fmtHour(d.ts) } : d)) : []);
       }
     } catch (e) {
       console.error("Failed to fetch chart data:", e);

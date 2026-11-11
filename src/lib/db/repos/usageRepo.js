@@ -750,19 +750,31 @@ export async function getUsageStats(period = "all") {
   return stats;
 }
 
-export async function getChartData(period = "7d") {
+// Start of the caller's local day, in UTC ms. tzOffsetMinutes follows
+// Date#getTimezoneOffset (UTC minus local, e.g. -420 for UTC+7); without it
+// the server's own timezone is used.
+function startOfLocalDay(tzOffsetMinutes) {
+  if (Number.isFinite(tzOffsetMinutes)) {
+    const offsetMs = tzOffsetMinutes * 60000;
+    return Math.floor((Date.now() - offsetMs) / 86400000) * 86400000 + offsetMs;
+  }
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  return startOfDay.getTime();
+}
+
+export async function getChartData(period = "7d", { tzOffsetMinutes } = {}) {
   const db = await getAdapter();
   const now = Date.now();
 
   if (period === "today") {
     const bucketCount = 24;
     const bucketMs = 3600000;
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const startTime = startOfDay.getTime();
+    const startTime = startOfLocalDay(tzOffsetMinutes);
     const endTime = startTime + bucketCount * bucketMs;
     const labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-    const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0, requests: 0 }));
+    // ts lets the client relabel hourly buckets in the viewer's timezone.
+    const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), ts: startTime + i * bucketMs, tokens: 0, cost: 0, requests: 0 }));
 
     const rows = db.all(
       `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
@@ -786,7 +798,7 @@ export async function getChartData(period = "7d") {
     const bucketMs = 3600000;
     const labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
     const startTime = now - bucketCount * bucketMs;
-    const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0, requests: 0 }));
+    const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), ts: startTime + i * bucketMs, tokens: 0, cost: 0, requests: 0 }));
 
     const rows = db.all(
       `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
@@ -850,6 +862,97 @@ export async function getChartData(period = "7d") {
       requests: dayData ? (dayData.requests || 0) : 0,
     };
   });
+}
+
+// Same buckets as getChartData, split per caller API key (top keys + "Other").
+export async function getApiKeyChartData(period = "7d", { tzOffsetMinutes } = {}) {
+  const db = await getAdapter();
+  const { LOCAL_KEY, newKeyBuckets, buildApiKeySeries } = await import("../helpers/apiKeyChart.js");
+
+  const apiKeyMap = {};
+  try {
+    const { getApiKeys } = await import("./apiKeysRepo.js");
+    const groupNames = {};
+    try {
+      const { getApiKeyGroups } = await import("./apiKeyGroupsRepo.js");
+      for (const g of await getApiKeyGroups()) groupNames[g.id] = g.name;
+    } catch {}
+    for (const k of await getApiKeys()) {
+      if (k.key) apiKeyMap[k.key.trim()] = { id: k.id, name: k.name, groupName: groupNames[k.groupId] || null };
+    }
+  } catch {}
+
+  const perKey = new Map();
+  let labels = [];
+  let timestamps = null; // hourly bucket starts, so the client can relabel in its timezone
+  const bucketsFor = (rawKey) => {
+    const key = rawKey && typeof rawKey === "string" ? rawKey.trim() : LOCAL_KEY;
+    if (!perKey.has(key)) perKey.set(key, newKeyBuckets(labels.length));
+    return perKey.get(key);
+  };
+
+  if (period === "today" || period === "24h") {
+    const bucketCount = 24;
+    const bucketMs = 3600000;
+    const startTime = period === "today" ? startOfLocalDay(tzOffsetMinutes) : Date.now() - bucketCount * bucketMs;
+    const endTime = startTime + bucketCount * bucketMs;
+    timestamps = Array.from({ length: bucketCount }, (_, i) => startTime + i * bucketMs);
+    labels = Array.from({ length: bucketCount }, (_, i) =>
+      new Date(startTime + i * bucketMs).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }));
+
+    const rows = db.all(
+      `SELECT timestamp, apiKey, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
+      [new Date(startTime).toISOString()]
+    );
+    for (const r of rows) {
+      const t = new Date(r.timestamp).getTime();
+      if (t < startTime || t > endTime) continue;
+      const idx = Math.min(Math.floor((t - startTime) / bucketMs), bucketCount - 1);
+      const b = bucketsFor(r.apiKey);
+      b.tokens[idx] += (r.promptTokens || 0) + (r.completionTokens || 0);
+      b.cost[idx] += r.cost || 0;
+      b.requests[idx] += 1;
+    }
+  } else {
+    const dateKeyOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let dayRows;
+    let bucketCount;
+    if (period === "all") {
+      dayRows = loadDaysInRange(db, null);
+      if (!dayRows.length) return { labels: [], series: [], keyCount: 0 };
+      const earliest = new Date(dayRows[0].dateKey + "T00:00:00");
+      bucketCount = Math.max(1, Math.round((today - earliest) / 86400000) + 1);
+    } else {
+      bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+      dayRows = loadDaysInRange(db, bucketCount);
+    }
+
+    const indexByDate = {};
+    labels = Array.from({ length: bucketCount }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (bucketCount - 1 - i));
+      indexByDate[dateKeyOf(d)] = i;
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    });
+
+    for (const r of dayRows) {
+      const idx = indexByDate[r.dateKey];
+      if (idx === undefined) continue;
+      const day = parseJson(r.data, {}) || {};
+      for (const ak of Object.values(day.byApiKey || {})) {
+        const b = bucketsFor(ak.apiKey);
+        b.tokens[idx] += (ak.promptTokens || 0) + (ak.completionTokens || 0);
+        b.cost[idx] += ak.cost || 0;
+        b.requests[idx] += ak.requests || 0;
+      }
+    }
+  }
+
+  const result = buildApiKeySeries(perKey, labels, (rawKey) => apiKeyMap[rawKey] || null, maskApiKey);
+  return timestamps ? { ...result, timestamps } : result;
 }
 
 function formatLogDate(date = new Date()) {
