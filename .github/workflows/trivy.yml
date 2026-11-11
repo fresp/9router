@@ -47,13 +47,20 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      # Lockfiles are not committed, and Trivy resolves npm dependencies from
-      # them. Resolve without running any install script.
-      - name: Resolve dependency lockfiles
+      # The Docker build installs with `npm ci`, which rejects a lockfile that
+      # no longer matches package.json. Catch that here with a clear message.
+      - name: Verify package-lock.json is in sync
         run: |
           set -euo pipefail
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          npm --prefix cli install --package-lock-only --ignore-scripts --no-audit --no-fund
+          if ! npm ci --ignore-scripts --dry-run --no-audit --no-fund >/dev/null; then
+            echo "::error file=package-lock.json::package-lock.json is out of sync with package.json. Run 'npm install --package-lock-only --ignore-scripts' and commit the result."
+            exit 1
+          fi
+
+      # cli/ has no committed lockfile, and Trivy resolves npm dependencies
+      # from one. Resolve without running any install script.
+      - name: Resolve CLI lockfile
+        run: npm --prefix cli install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Scan repository (SARIF)
         run: |
