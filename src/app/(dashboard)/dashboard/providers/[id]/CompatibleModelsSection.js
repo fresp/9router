@@ -155,11 +155,11 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
           // Already imported: re-import still refreshes the stored limits.
           // Legacy alias rows have no custom-model record to carry them.
           if (!limits || existing.source !== "custom") continue;
-          await onAddCustomModel(modelId, "llm", undefined, undefined, undefined, limits);
+          await onAddCustomModel(modelId, limits);
           refreshedCount += 1;
           continue;
         }
-        await onAddCustomModel(modelId, "llm", undefined, undefined, undefined, limits);
+        await onAddCustomModel(modelId, limits);
         importedCount += 1;
       }
       if (importedCount === 0) {
