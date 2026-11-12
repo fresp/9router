@@ -4,6 +4,7 @@ import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { AI_MODELS } from "@/shared/constants/config";
 import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { sanitizeLimits } from "@/shared/utils/modelLimits";
 
 // GET /api/models - Get models with aliases
 export async function GET() {
@@ -71,6 +72,8 @@ export async function GET() {
           contextWindow: c.contextWindow,
           maxOutput: c.maxOutput,
           ...(m.caps || {}),
+          // Limits the upstream declared at import time beat the name heuristic.
+          ...(sanitizeLimits(m.limits) || {}),
         },
       });
     }

@@ -4,6 +4,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
+import { extractUpstreamLimits } from "@/shared/utils/modelLimits";
 function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
   const borderColor = testStatus === "ok"
     ? "border-green-500/40"
@@ -141,15 +142,30 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         return;
       }
       let importedCount = 0;
+      let refreshedCount = 0;
       for (const model of models) {
         const modelId = model.id || model.name || model.model;
         if (!modelId) continue;
-        if (allModels.some((entry) => entry.id === modelId)) continue;
-        await onAddCustomModel(modelId);
+        // Context/output limits the upstream publishes for this model. Stored
+        // with the model so /v1/models republishes them instead of a window
+        // guessed from the model name.
+        const limits = extractUpstreamLimits(model);
+        const existing = allModels.find((entry) => entry.id === modelId);
+        if (existing) {
+          // Already imported: re-import still refreshes the stored limits.
+          // Legacy alias rows have no custom-model record to carry them.
+          if (!limits || existing.source !== "custom") continue;
+          await onAddCustomModel(modelId, "llm", undefined, undefined, undefined, limits);
+          refreshedCount += 1;
+          continue;
+        }
+        await onAddCustomModel(modelId, "llm", undefined, undefined, undefined, limits);
         importedCount += 1;
       }
       if (importedCount === 0) {
-        alert("No new models were added.");
+        alert(refreshedCount > 0
+          ? `No new models. Refreshed context limits for ${refreshedCount} model(s).`
+          : "No new models were added.");
       }
     } catch (error) {
       console.log("Error importing models:", error);
