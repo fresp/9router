@@ -523,8 +523,8 @@ const KNOWLEDGE_TASKS = [
 ];
 
 async function runKnowledge(t, task) {
-  const r = await chat({ key: t.key, model: t.model, messages: [{ role: "user", content: task.prompt }], maxTokens: 2500 });
-  return { pass: null, text: r.content, calls: [r] };
+  const r = await chat({ key: t.key, model: t.model, messages: [{ role: "user", content: task.prompt }], maxTokens: 8000 });
+  return { pass: null, text: r.content, finish: r.finish, calls: [r] };
 }
 
 const JUDGE_PROMPT = `You are grading an answer to a planning or advisory request from an engineering manager.
@@ -591,7 +591,7 @@ async function cmdRun(args) {
         const calls = res.calls || [];
         const row = {
           target: t.name, cat, id: task.id, pass: res.pass, reason: res.reason || null, got: res.got ?? null, expected: res.expected ?? null,
-          text: res.text ?? null, turns: res.turns ?? calls.length,
+          text: res.text ?? null, finish: res.finish ?? null, turns: res.turns ?? calls.length,
           served: [...new Set(calls.map((c) => c.model).filter(Boolean))],
           status: calls.map((c) => c.status), errors: calls.map((c) => c.error).filter(Boolean).slice(0, 2),
           ttftMs: calls[0]?.ttftMs ?? null, totalMs: calls.reduce((a, c) => a + c.totalMs, 0),
