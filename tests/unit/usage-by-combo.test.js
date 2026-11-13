@@ -68,6 +68,11 @@ describe("Usage stats by combo", () => {
     await db.saveRequestUsage({ ...smart, timestamp: "2099-01-01T00:00:02.000Z", route: "routed", routeConfidence: 0.7, failover: true });
     await db.saveRequestUsage({ ...smart, timestamp: "2099-01-01T00:00:03.000Z", route: "kept" });
     await db.saveRequestUsage({ ...smart, timestamp: "2099-01-01T00:00:04.000Z", route: "default" });
+    await db.saveRequestUsage({ ...smart, timestamp: "2099-01-01T00:00:06.000Z", route: "low_confidence" });
+    await db.saveRequestUsage({ ...smart, timestamp: "2099-01-01T00:00:07.000Z", route: "router_failed", routeReason: "http_429" });
+    await db.saveRequestUsage({ ...smart, timestamp: "2099-01-01T00:00:08.000Z", route: "router_failed", routeReason: "http_429" });
+    await db.saveRequestUsage({ ...smart, timestamp: "2099-01-01T00:00:09.000Z", route: "router_failed", routeReason: "timeout" });
+    await db.saveRequestUsage({ ...smart, timestamp: "2099-01-01T00:00:10.000Z", route: "router_failed", routeReason: "Not A Valid Code!" });
     // Non-smart combo: no routing outcome, only failover
     await db.saveRequestUsage({ ...base, model: "router-model", combo: "team-fallback", timestamp: "2099-01-01T00:00:05.000Z", failover: true, tokens: { prompt_tokens: 1, completion_tokens: 1 } });
 
@@ -75,7 +80,10 @@ describe("Usage stats by combo", () => {
       const stats = await db.getUsageStats(period);
       const entries = Object.values(stats.byCombo);
       const smartEntry = entries.find((e) => e.combo === "team-smart");
-      expect(smartEntry.requests).toBe(4);
+      expect(smartEntry.requests).toBe(9);
+      expect(smartEntry.lowConfidence).toBe(1);
+      expect(smartEntry.routerFailed).toBe(4);
+      expect(smartEntry.failReasons).toEqual({ http_429: 2, timeout: 1 });
       expect(smartEntry.routed).toBe(2);
       expect(smartEntry.kept).toBe(1);
       expect(smartEntry.defaulted).toBe(1);
