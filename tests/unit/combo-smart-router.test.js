@@ -11,6 +11,7 @@ import {
 import {
   extractPromptState,
   buildChoiceCriteria,
+  deriveRoutingSessionId,
   resolveRouteInstructions,
   DEFAULT_ROUTE_INSTRUCTIONS,
   MAX_ROUTE_INSTRUCTIONS_CHARS,
@@ -71,10 +72,72 @@ describe("System One Smart Combo Router", () => {
       expect(extractPromptState({ input: "Codex prompt" })).toBe("Codex prompt");
     });
 
+    it("reads the latest user text from Responses API input items", () => {
+      const body = {
+        input: [
+          { type: "message", role: "user", content: [{ type: "input_text", text: "Refactor the auth module" }] },
+          { type: "message", role: "assistant", content: [{ type: "output_text", text: "Reading the file first." }] },
+          { type: "function_call", call_id: "c1", name: "read", arguments: "{}" },
+          { type: "function_call_output", call_id: "c1", output: "file contents" },
+        ],
+      };
+      expect(extractPromptState(body)).toBe("Refactor the auth module");
+    });
+
+    it("skips tool results and reads the user text in chat and Claude formats", () => {
+      expect(extractPromptState({
+        messages: [
+          { role: "user", content: "Fix the bug" },
+          { role: "assistant", content: null, tool_calls: [{ id: "1", type: "function", function: { name: "read", arguments: "{}" } }] },
+          { role: "tool", tool_call_id: "1", content: "file contents" },
+        ],
+      })).toBe("Fix the bug");
+      expect(extractPromptState({
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Fix the bug" }] },
+          { role: "assistant", content: [{ type: "tool_use", id: "1", name: "read", input: {} }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "1", content: "file contents" }] },
+        ],
+      })).toBe("Fix the bug");
+    });
+
+    it("reads Gemini contents", () => {
+      expect(extractPromptState({ contents: [{ role: "user", parts: [{ text: "Explain this" }] }] })).toBe("Explain this");
+    });
+
     it("truncates prompt state to maxChars cap", () => {
       const longText = "a".repeat(3000);
       const extracted = extractPromptState({ prompt: longText }, 500);
       expect(extracted.length).toBe(500);
+    });
+  });
+
+  describe("deriveRoutingSessionId", () => {
+    const turn1 = { messages: [{ role: "system", content: "sys" }, { role: "user", content: "Refactor the auth module" }] };
+    const turn3 = { messages: [...turn1.messages, { role: "assistant", content: "Done." }, { role: "user", content: "Now add tests" }] };
+
+    it("is stable across the turns of one conversation, from the first turn", () => {
+      const id = deriveRoutingSessionId(turn1, "key-a");
+      expect(id).toMatch(/^conv:[0-9a-f]{32}$/);
+      expect(deriveRoutingSessionId(turn3, "key-a")).toBe(id);
+    });
+
+    it("differs per conversation and per caller", () => {
+      const id = deriveRoutingSessionId(turn1, "key-a");
+      expect(deriveRoutingSessionId({ messages: [{ role: "user", content: "Another task" }] }, "key-a")).not.toBe(id);
+      expect(deriveRoutingSessionId(turn1, "key-b")).not.toBe(id);
+    });
+
+    it("works for Responses API input and string prompts", () => {
+      const responses = { input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Refactor the auth module" }] }] };
+      expect(deriveRoutingSessionId(responses, "key-a")).toBe(deriveRoutingSessionId(turn1, "key-a"));
+      expect(deriveRoutingSessionId({ input: "Refactor the auth module" }, "key-a")).toBe(deriveRoutingSessionId(turn1, "key-a"));
+    });
+
+    it("returns null when there is no user text", () => {
+      expect(deriveRoutingSessionId({ messages: [{ role: "assistant", content: "hi" }] })).toBeNull();
+      expect(deriveRoutingSessionId({ messages: [] })).toBeNull();
+      expect(deriveRoutingSessionId(null)).toBeNull();
     });
   });
 
