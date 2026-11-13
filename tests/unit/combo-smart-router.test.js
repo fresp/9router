@@ -337,10 +337,29 @@ describe("System One Smart Combo Router", () => {
       expect(seen).toEqual([
         { model: "ds/deepseek-v4", route: "routed", confidence: 0.9, attempt: 0 },
         { model: "cx/gpt-5-mini", route: "routed", confidence: 0.9, attempt: 1 },
-        { model: "cx/gpt-5-mini", route: "default", confidence: null, attempt: 0 },
+        { model: "cx/gpt-5-mini", route: "low_confidence", confidence: null, attempt: 0 },
       ]);
       // handleSingleModel keeps its (body, model) contract
       expect(handleSingleModel.mock.calls.every((call) => call.length === 2)).toBe(true);
+    });
+
+    it("reports why the router gave no decision", async () => {
+      const seen = [];
+      const handleSingleModel = vi.fn(async () => okResponse("ok"));
+      const common = { models: ["cx/gpt-5-mini", "ds/deepseek-v4"], handleSingleModel, log, comboStrategy: "smart", sessionSticky: false, onRouteAttempt: (route) => seen.push(route) };
+      const body = { messages: [{ role: "user", content: "a" }] };
+
+      await handleComboChat({ ...common, body, comboName: "why-1", resolveSmartChoice: async () => ({ choice: null, failure: "http_429" }) });
+      await handleComboChat({ ...common, body, comboName: "why-2", resolveSmartChoice: async () => null });
+      await handleComboChat({ ...common, body, comboName: "why-3", resolveSmartChoice: async () => ({ choice: "not/a-member", confidence: 1 }) });
+      await handleComboChat({ ...common, body, comboName: "why-4", resolveSmartChoice: async () => { throw new Error("boom"); } });
+
+      expect(seen).toEqual([
+        { route: "router_failed", confidence: null, attempt: 0, reason: "http_429" },
+        { route: "router_failed", confidence: null, attempt: 0, reason: "no_decision" },
+        { route: "router_failed", confidence: null, attempt: 0, reason: "invalid_choice" },
+        { route: "router_failed", confidence: null, attempt: 0, reason: "error" },
+      ]);
     });
 
     it("fails open to default order if System One evaluation fails or times out", async () => {

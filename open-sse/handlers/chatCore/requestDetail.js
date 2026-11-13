@@ -152,6 +152,7 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     // Routing outcome of the combo that served this request (see handleComboChat)
     route: comboRoute?.route || undefined,
     routeConfidence: typeof comboRoute?.confidence === "number" ? comboRoute.confidence : undefined,
+    routeReason: comboRoute?.reason || undefined,
     failover: comboRoute?.attempt > 0 || undefined
   }).catch(() => {});
 }

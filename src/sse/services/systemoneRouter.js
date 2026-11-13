@@ -16,8 +16,8 @@ import {
  * Resolves the configured router model's provider and credentials, sends the choice
  * query with a short timeout, and returns the parsed routing decision.
  *
- * Never throws: on missing credentials, timeout, or upstream failure, returns null
- * so combo dispatch fails open to standard model ordering.
+ * Never throws: on missing credentials, timeout, or upstream failure, returns a result
+ * without a choice (and a `failure` code) so combo dispatch fails open to standard model ordering.
  *
  * @param {object} opts
  * @param {object} opts.body - Client request body
@@ -27,8 +27,14 @@ import {
  * @param {Record<string, string>} [opts.memberDescriptions] - Per-member "when to pick" descriptions
  * @param {object} [opts.log] - Logger
  * @param {number} [opts.timeoutMs=DEFAULT_SYSTEMONE_TIMEOUT_MS] - Hard ceiling for router evaluation
- * @returns {Promise<{ choice: string, confidence: number|null, probabilities: Record<string, number>|null } | null>}
+ * @returns {Promise<{ choice: string|null, confidence: number|null, probabilities: Record<string, number>|null, failure?: string } | null>}
  */
+// No routing decision: the combo falls back to its configured order. `failure` says why,
+// for the per-combo usage statistics.
+function noDecision(failure) {
+  return { choice: null, confidence: null, probabilities: null, failure };
+}
+
 export async function resolveSmartChoice({
   body,
   models,
@@ -47,7 +53,7 @@ export async function resolveSmartChoice({
   const state = extractPromptState(body);
   if (!state) {
     log?.debug?.("COMBO", "smart-router: empty prompt state, skipping classification");
-    return null;
+    return noDecision("no_prompt");
   }
 
   const criteria = buildChoiceCriteria(models, memberDescriptions);
@@ -57,14 +63,14 @@ export async function resolveSmartChoice({
     const modelInfo = await getModelInfo(targetModel);
     if (!modelInfo?.provider) {
       log?.warn?.("COMBO", `smart-router: unrecognized router model "${targetModel}"`);
-      return null;
+      return noDecision("router_model_unknown");
     }
 
     const { provider, model } = modelInfo;
     const credentials = await getProviderCredentials(provider, new Set(), model);
     if (!credentials || credentials.allRateLimited) {
       log?.warn?.("COMBO", `smart-router: no credentials available for router provider "${provider}"`);
-      return null;
+      return noDecision("no_credentials");
     }
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
@@ -82,7 +88,7 @@ export async function resolveSmartChoice({
 
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error(`System One router timed out after ${timeoutMs}ms`)), timeoutMs);
+      timeoutId = setTimeout(() => reject(Object.assign(new Error(`System One router timed out after ${timeoutMs}ms`), { code: "timeout" })), timeoutMs);
     });
 
     const corePromise = handleSystemoneCore({
@@ -102,19 +108,19 @@ export async function resolveSmartChoice({
 
     if (!result?.success || !result.response) {
       log?.warn?.("COMBO", `smart-router: evaluation failed (${result?.status || "error"})`);
-      return null;
+      return noDecision(Number.isInteger(result?.status) ? `http_${result.status}` : "upstream_error");
     }
 
     const json = await result.response.json();
     const route = parseSystemOneRouteAnswer(json);
     if (!route || !route.choice) {
       log?.warn?.("COMBO", "smart-router: response missing valid route choice");
-      return null;
+      return noDecision("invalid_response");
     }
 
     return route;
   } catch (err) {
     log?.warn?.("COMBO", `smart-router: evaluation aborted (${err?.message || String(err)})`);
-    return null;
+    return noDecision(err?.code === "timeout" ? "timeout" : "error");
   }
 }

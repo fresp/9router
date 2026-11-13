@@ -123,8 +123,29 @@ const DIRECT_COMBO_LABEL = "Direct (no combo)";
 
 // Router statistics of one combo: how the first model was picked, and how many
 // requests were served by a later member after the first choice failed.
+// Why the router gave no decision, as recorded by resolveSmartChoice / handleComboChat
+const ROUTER_FAIL_LABELS = {
+  http_429: "rate limited (429)",
+  timeout: "timeout",
+  no_prompt: "no prompt text",
+  no_credentials: "no credentials",
+  router_model_unknown: "unknown router model",
+  invalid_response: "invalid response",
+  invalid_choice: "choice not a member",
+  upstream_error: "upstream error",
+  no_decision: "no decision",
+  error: "error",
+};
+
+function routerFailLabel(reason) {
+  if (ROUTER_FAIL_LABELS[reason]) return ROUTER_FAIL_LABELS[reason];
+  const http = /^http_(\d{3})$/.exec(reason);
+  return http ? `HTTP ${http[1]}` : reason;
+}
+
 function ComboRouterStats({ router }) {
-  const decided = (router?.routed || 0) + (router?.kept || 0) + (router?.defaulted || 0);
+  const decided = (router?.routed || 0) + (router?.kept || 0) + (router?.lowConfidence || 0) + (router?.routerFailed || 0) + (router?.defaulted || 0);
+  const failReasons = Object.entries(router?.failReasons || {}).sort((a, b) => b[1] - a[1]);
   const failover = router?.failover || 0;
   if (!decided && !failover) return <span className="text-text-muted">—</span>;
   const pct = (n) => `${Math.round((n / decided) * 100)}%`;
@@ -135,7 +156,14 @@ function ComboRouterStats({ router }) {
         <>
           <span title="Router decision was used">Routed <b className="font-semibold text-text-main">{pct(router.routed)}</b></span>
           <span title="Session model kept (prompt cache retained)">Kept <b className="font-semibold text-text-main">{pct(router.kept)}</b></span>
-          <span title="Router unsure or unavailable: configured member order was used">Default order <b className="font-semibold text-text-main">{pct(router.defaulted)}</b></span>
+          <span title="Router answered below the confidence threshold: configured member order was used">Low confidence <b className="font-semibold text-text-main">{pct(router.lowConfidence)}</b></span>
+          <span title="Router gave no decision: configured member order was used">
+            Router failed <b className={`font-semibold ${router.routerFailed > 0 ? "text-amber-600 dark:text-amber-400" : "text-text-main"}`}>{pct(router.routerFailed)}</b>
+            {failReasons.length > 0 && <span> ({failReasons.slice(0, 2).map(([reason, n]) => `${routerFailLabel(reason)} ×${fmt(n)}`).join(", ")})</span>}
+          </span>
+          {router.defaulted > 0 && (
+            <span title="Recorded before low confidence and router failures were tracked separately">Default order <b className="font-semibold text-text-main">{pct(router.defaulted)}</b></span>
+          )}
           {avgConfidence && <span title="Average confidence of the router decisions that were used">Conf <b className="font-semibold text-text-main">{avgConfidence}</b></span>}
         </>
       )}
@@ -511,12 +539,14 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         const groupedData = groupDataByKey(sortData(stats.byCombo, {}, sortBy, sortOrder), "combo");
         // Share = portion of the combo's requests that this model ended up serving
         for (const group of groupedData) {
-          const router = { routed: 0, kept: 0, defaulted: 0, failover: 0, confidenceSum: 0, confidenceCount: 0 };
+          const router = { routed: 0, kept: 0, lowConfidence: 0, routerFailed: 0, defaulted: 0, failover: 0, confidenceSum: 0, confidenceCount: 0 };
+          const failReasons = {};
           for (const item of group.items) {
             item.share = group.summary.requests > 0 ? Math.round((item.requests / group.summary.requests) * 100) : 0;
             for (const f of Object.keys(router)) router[f] += item[f] || 0;
+            for (const [reason, n] of Object.entries(item.failReasons || {})) failReasons[reason] = (failReasons[reason] || 0) + n;
           }
-          group.router = router;
+          group.router = { ...router, failReasons };
         }
         return {
           columns: COMBO_COLUMNS,

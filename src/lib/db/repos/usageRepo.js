@@ -58,14 +58,21 @@ function comboStatsKey(combo, comboVia, model, provider) {
   return `${combo || ""}|${comboVia || ""}|${model}|${provider || "unknown"}`;
 }
 
-const ROUTE_FIELDS = { routed: "routed", kept: "kept", default: "defaulted" };
-const ROUTE_COUNTERS = ["routed", "kept", "defaulted", "failover", "confidenceSum", "confidenceCount"];
+// "default" is the pre-split outcome, kept so older records still count.
+const ROUTE_FIELDS = { routed: "routed", kept: "kept", low_confidence: "lowConfidence", router_failed: "routerFailed", default: "defaulted" };
+const ROUTE_COUNTERS = ["routed", "kept", "lowConfidence", "routerFailed", "defaulted", "failover", "confidenceSum", "confidenceCount"];
+const ROUTE_REASON_RE = /^[a-z0-9_]{1,40}$/;
 
 // Count how a combo picked the model for one request: router decision used,
 // session model kept, configured order, plus failover and router confidence.
-function addRouteCounters(bucket, { route, routeConfidence, failover }) {
+function addRouteCounters(bucket, { route, routeConfidence, routeReason, failover }) {
   const field = ROUTE_FIELDS[route];
   if (field) bucket[field] = (bucket[field] || 0) + 1;
+  // Why the router gave no decision (http_429, timeout, no_prompt, ...)
+  if (route === "router_failed" && typeof routeReason === "string" && ROUTE_REASON_RE.test(routeReason)) {
+    bucket.failReasons ||= {};
+    bucket.failReasons[routeReason] = (bucket.failReasons[routeReason] || 0) + 1;
+  }
   if (failover) bucket.failover = (bucket.failover || 0) + 1;
   if (route === "routed" && typeof routeConfidence === "number" && Number.isFinite(routeConfidence)) {
     bucket.confidenceSum = (bucket.confidenceSum || 0) + routeConfidence;
@@ -76,6 +83,10 @@ function addRouteCounters(bucket, { route, routeConfidence, failover }) {
 function mergeRouteCounters(target, source) {
   for (const f of ROUTE_COUNTERS) {
     if (source[f]) target[f] = (target[f] || 0) + source[f];
+  }
+  for (const [reason, n] of Object.entries(source.failReasons || {})) {
+    target.failReasons ||= {};
+    target.failReasons[reason] = (target.failReasons[reason] || 0) + (n || 0);
   }
 }
 
@@ -341,6 +352,7 @@ export async function saveRequestUsage(entry) {
             ...(entry.comboVia ? { comboVia: entry.comboVia } : {}),
             ...(entry.route ? { route: entry.route } : {}),
             ...(typeof entry.routeConfidence === "number" ? { routeConfidence: entry.routeConfidence } : {}),
+            ...(entry.routeReason ? { routeReason: entry.routeReason } : {}),
             ...(entry.failover ? { failover: true } : {}),
           } : {}),
         ]
@@ -866,7 +878,7 @@ export async function recalculateUsageCosts() {
           connectionId: r.connectionId, apiKey: r.apiKey, endpoint: r.endpoint,
           tokens, cost, costParts: splitCostByRate(cost, tokens, pricing),
           combo: meta.combo, comboVia: meta.comboVia,
-          route: meta.route, routeConfidence: meta.routeConfidence, failover: meta.failover,
+          route: meta.route, routeConfidence: meta.routeConfidence, routeReason: meta.routeReason, failover: meta.failover,
         });
       }
       db.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data`, [dateKey, stringifyJson(day)]);

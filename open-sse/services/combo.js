@@ -349,7 +349,7 @@ export function isZeroContentResponse(data) {
  * @param {boolean} [options.sessionSticky=true] - Keep chosen model across session requests to retain prompt cache
  * @param {number} [options.confidenceThreshold=0.8] - Minimum confidence required for model switch (0-1)
  * @param {Function|null} [options.resolveSmartChoice=null] - Smart router resolver callback: (body, models) => Promise<{ choice, probabilities, confidence } | null>
- * @param {Function|null} [options.onRouteAttempt=null] - Called before each member attempt with { route, confidence, attempt }; route is "routed" (router decision used), "kept" (session model kept), "default" (configured order) or null (non-smart strategy)
+ * @param {Function|null} [options.onRouteAttempt=null] - Called before each member attempt with { route, confidence, attempt, reason? }; route is "routed" (router decision used), "kept" (session model kept), "low_confidence" or "router_failed" (configured order used; reason says why the router gave no decision) or null (non-smart strategy)
  * @returns {Promise<Response>}
  */
 export async function handleComboChat({
@@ -371,9 +371,11 @@ export async function handleComboChat({
   let rotatedModels = models;
   let activeStickyModel = null;
   // How the first candidate was picked, for per-combo usage stats:
-  // "routed" (router decision used), "kept" (session model kept), "default" (configured order)
+  // "routed" (router decision used), "kept" (session model kept), or the configured order
+  // because the router was unsure ("low_confidence") or gave no decision ("router_failed").
   let routeOutcome = null;
   let routeConfidence = null;
+  let routeReason = null;
 
   if (comboStrategy === "smart") {
     const policy = (typeof smartPolicy === "string" ? smartPolicy : "smart").toLowerCase();
@@ -435,17 +437,21 @@ export async function handleComboChat({
       }
     } else if (typeof resolveSmartChoice === "function") {
       // Turn 1 or per-turn: evaluate System One to select initial model
-      routeOutcome = "default";
+      routeOutcome = "router_failed";
+      routeReason = "error";
       try {
         const smartResult = await resolveSmartChoice(body, models);
         const conf = typeof smartResult?.confidence === "number" ? smartResult.confidence : null;
 
         if (smartResult?.choice && models.includes(smartResult.choice)) {
           if (switchThreshold > 0 && conf !== null && conf < switchThreshold) {
+            routeOutcome = "low_confidence";
+            routeReason = null;
             log.info("COMBO", `smart-router confidence (${conf}) below threshold (${switchThreshold}), fallback to order: [${models.join(", ")}]`);
           } else {
             rotatedModels = orderModelsByChoice(models, smartResult);
             routeOutcome = "routed";
+            routeReason = null;
             routeConfidence = conf;
             log.info("COMBO", `smart-router selected ${smartResult.choice} (confidence: ${conf ?? "N/A"})`);
             if (!isPerTurn && sessionId) {
@@ -454,7 +460,8 @@ export async function handleComboChat({
             }
           }
         } else {
-          log.info("COMBO", `smart-router no decision, fallback to order: [${models.join(", ")}]`);
+          routeReason = smartResult?.failure || (smartResult?.choice ? "invalid_choice" : "no_decision");
+          log.info("COMBO", `smart-router no decision (${routeReason}), fallback to order: [${models.join(", ")}]`);
         }
       } catch (err) {
         log.warn("COMBO", `smart-router error, fallback to order: [${models.join(", ")}]`, { error: err?.message || String(err) });
@@ -488,7 +495,7 @@ export async function handleComboChat({
 
     try {
       if (typeof onRouteAttempt === "function") {
-        onRouteAttempt({ route: routeOutcome, confidence: routeConfidence, attempt: i });
+        onRouteAttempt({ route: routeOutcome, confidence: routeConfidence, attempt: i, ...(routeReason ? { reason: routeReason } : {}) });
       }
       const result = await handleSingleModel(body, modelStr);
       
