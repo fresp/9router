@@ -59,7 +59,8 @@ function memberOf(combo, model, members) {
   if (!table || !model) return null;
   const id = String(model).toLowerCase();
   for (const [label, needles] of Object.entries(table)) {
-    if (needles.some((n) => id.includes(n.toLowerCase()))) return label;
+    // "=name" matches the whole id, anything else matches a substring.
+    if (needles.some((n) => (n.startsWith("=") ? id === n.slice(1).toLowerCase() : id.includes(n.toLowerCase())))) return label;
   }
   return null;
 }
