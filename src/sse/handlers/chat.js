@@ -29,6 +29,7 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
+import { deriveRoutingSessionId } from "open-sse/services/systemoneRouter.js";
 
 /**
  * Handle chat completion request
@@ -60,7 +61,9 @@ export async function handleChat(request, clientRawRequest = null) {
   if (contextMarker) body.model = modelStr;
 
   const session = resolveSessionIdentity({ headers: clientRawRequest?.headers, body });
-  const sessionId = session?.sessionId || null;
+  // Smart-router stickiness needs a key that is stable from the first turn; the resolved
+  // session id is generated per request until the conversation has assistant text.
+  const sessionId = deriveRoutingSessionId(body, extractApiKey(request)) || session?.sessionId || null;
 
   // Request summary is emitted as the unified "▶" line in chatCore (has fmt/thinking/account)
 
@@ -263,7 +266,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
       const comboCfg = comboStrategies[modelStr] || {};
       const nestedSession = resolveSessionIdentity({ headers: clientRawRequest?.headers, body });
-      const nestedSessionId = nestedSession?.sessionId || null;
+      const nestedSessionId = deriveRoutingSessionId(body, apiKey) || nestedSession?.sessionId || null;
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
       return handleComboChat({
         body,

@@ -4,6 +4,10 @@
  * before generation begins, with session stickiness for prompt-cache retention.
  */
 
+import crypto from "crypto";
+import { OPENAI_BLOCK, RESPONSES_ITEM } from "../translator/schema/blocks.js";
+import { ROLE } from "../translator/schema/roles.js";
+
 export const DEFAULT_SYSTEMONE_ROUTER_MODEL = "oc/jev-1.13-free";
 export const DEFAULT_SYSTEMONE_TIMEOUT_MS = 8000;
 export const MAX_STATE_CHARS = 2000;
@@ -30,25 +34,21 @@ const comboSessionModelStore = new Map();
 export function extractPromptState(body, maxChars = MAX_STATE_CHARS) {
   if (!body || typeof body !== "object") return "";
 
-  // Messages array (OpenAI / Claude / etc.) or input array (Codex)
-  const messages = Array.isArray(body.messages)
-    ? body.messages
-    : (Array.isArray(body.input) ? body.input : null);
+  const messages = requestTurns(body);
 
   if (messages && messages.length > 0) {
     // Find the latest user message
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
-      if (msg?.role === "user" || msg?.type === "message" || (!msg?.role && msg?.content)) {
-        const text = extractTextFromContent(msg.content ?? msg.text);
+      if (isUserTurn(msg)) {
+        const text = turnText(msg);
         if (text && text.trim().length > 0) {
           return text.trim().slice(0, maxChars);
         }
       }
     }
     // Fallback: latest message of any role
-    const lastMsg = messages[messages.length - 1];
-    const text = extractTextFromContent(lastMsg?.content ?? lastMsg?.text);
+    const text = turnText(messages[messages.length - 1]);
     if (text) return text.trim().slice(0, maxChars);
   }
 
@@ -63,19 +63,71 @@ export function extractPromptState(body, maxChars = MAX_STATE_CHARS) {
   return "";
 }
 
+// Text part types across client formats: chat/Claude "text", Responses "input_text"/"output_text".
+// Gemini parts carry text without a type.
+const TEXT_PART_TYPES = new Set([OPENAI_BLOCK.TEXT, RESPONSES_ITEM.INPUT_TEXT, RESPONSES_ITEM.OUTPUT_TEXT]);
+
 function extractTextFromContent(content) {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
       .map((part) => {
         if (typeof part === "string") return part;
-        if (part?.type === "text" && typeof part.text === "string") return part.text;
+        if (typeof part?.text === "string" && (part.type === undefined || TEXT_PART_TYPES.has(part.type))) return part.text;
         return "";
       })
       .filter(Boolean)
       .join(" ");
   }
   return "";
+}
+
+// Conversation turns of the client request: chat/Claude messages[], Responses input[], Gemini contents[].
+function requestTurns(body) {
+  if (Array.isArray(body?.messages)) return body.messages;
+  if (Array.isArray(body?.input)) return body.input;
+  if (Array.isArray(body?.contents)) return body.contents;
+  return null;
+}
+
+// A user turn, or a role-less item that still carries content (legacy shapes).
+function isUserTurn(msg) {
+  if (!msg || typeof msg !== "object") return false;
+  if (msg.role === ROLE.USER) return true;
+  return !msg.role && (msg.type === RESPONSES_ITEM.MESSAGE || !!msg.content);
+}
+
+function turnText(msg) {
+  return extractTextFromContent(msg?.content ?? msg?.text ?? msg?.parts);
+}
+
+/**
+ * Session key for smart-router stickiness. The first user message of a conversation
+ * is the same on every turn, so the key is stable from turn 1 and does not depend on
+ * client headers (some clients send a new request id on every call). Scoped by
+ * `namespace` (the caller's API key) so different callers never share a session.
+ *
+ * @param {object} body - Client request body
+ * @param {string} [namespace=""] - Caller scope, e.g. the API key
+ * @returns {string|null} Session key, or null when the request has no user text
+ */
+export function deriveRoutingSessionId(body, namespace = "") {
+  if (!body || typeof body !== "object") return null;
+  let first = "";
+  const turns = requestTurns(body);
+  if (turns) {
+    for (const msg of turns) {
+      if (!isUserTurn(msg)) continue;
+      first = turnText(msg).trim();
+      if (first) break;
+    }
+  } else if (typeof body.input === "string") {
+    first = body.input.trim();
+  } else if (typeof body.prompt === "string") {
+    first = body.prompt.trim();
+  }
+  if (!first) return null;
+  return "conv:" + crypto.createHash("sha256").update(`${namespace || ""}\u0000${first}`).digest("hex").slice(0, 32);
 }
 
 /**
