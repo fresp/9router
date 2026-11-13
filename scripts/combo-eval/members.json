@@ -1,0 +1,11 @@
+{
+  "oca-code": {
+    "oca-deep": ["sol", "sonnet"],
+    "oca-fast": ["deepseek", "glm", "haiku", "luna"]
+  },
+  "oca-plan": {
+    "gpt-6.1-sol": ["sol"],
+    "atp/claude-opus-5-5": ["opus"],
+    "gpt-6-luna": ["luna"]
+  }
+}
