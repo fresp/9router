@@ -95,7 +95,8 @@ async function sendOne({ baseUrl, apiKey, model, messages, maxTokens, timeoutMs 
         let evt;
         try { evt = JSON.parse(data); } catch { continue; }
         if (evt.error) out.error = JSON.stringify(evt.error).slice(0, 500);
-        if (evt.model && !out.model) out.model = evt.model;
+        // Keepalive chunks carry a placeholder model; the real id arrives with the first upstream chunk.
+        if (evt.model && evt.model !== "keepalive") out.model = evt.model;
         if (evt.usage) out.usage = evt.usage;
         const choice = evt.choices?.[0];
         const delta = choice?.delta?.content;
