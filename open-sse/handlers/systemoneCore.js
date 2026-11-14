@@ -1,7 +1,7 @@
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { PROVIDER_MEDIA } from "../providers/index.js";
-import { getModelUpstreamId } from "../config/providerModels.js";
+import { getModelMeta, getModelUpstreamId } from "../config/providerModels.js";
 import { generateSessionId } from "../executors/opencode-zen.js";
 
 const OPENCODE_PROVIDERS = new Set(["opencode", "opencode-zen"]);
@@ -79,7 +79,11 @@ export async function handleSystemoneCore({
     ...(OPENCODE_PROVIDERS.has(provider) ? { "x-opencode-session": generateSessionId() } : {}),
   };
   // Cloudflare validates the body model as a short selector (e.g. "clef-flash"), not the full id.
-  const requestBody = { ...body, model: getModelUpstreamId(provider, model) || model };
+  // A model flagged `omitBodyModel` is addressed by the URL alone and rejects a body `model` (400).
+  const { model: _bodyModel, ...bodyWithoutModel } = body;
+  const requestBody = getModelMeta(provider, model)?.omitBodyModel
+    ? bodyWithoutModel
+    : { ...body, model: getModelUpstreamId(provider, model) || model };
 
   log?.debug?.("SYSTEMONE", `${provider.toUpperCase()} | ${model}`);
 
