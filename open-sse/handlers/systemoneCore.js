@@ -57,6 +57,10 @@ export async function handleSystemoneCore({
     }
     targetUrl = targetUrl.replace("{accountId}", accountId);
   }
+  // A model flagged `inputEnvelope` uses the provider's generic run endpoint: the model is named
+  // in the body and the System One payload sits under `input` (Cloudflare third-party models).
+  const inputEnvelope = !!getModelMeta(provider, model)?.inputEnvelope;
+  if (inputEnvelope) targetUrl = targetUrl.replace("/{model}", "");
   if (targetUrl.includes("{model}")) {
     targetUrl = targetUrl.replace(/\{model\}/g, model);
   }
@@ -79,11 +83,9 @@ export async function handleSystemoneCore({
     ...(OPENCODE_PROVIDERS.has(provider) ? { "x-opencode-session": generateSessionId() } : {}),
   };
   // Cloudflare validates the body model as a short selector (e.g. "clef-flash"), not the full id.
-  // A model flagged `omitBodyModel` is addressed by the URL alone and rejects a body `model` (400).
-  const { model: _bodyModel, ...bodyWithoutModel } = body;
-  const requestBody = getModelMeta(provider, model)?.omitBodyModel
-    ? bodyWithoutModel
-    : { ...body, model: getModelUpstreamId(provider, model) || model };
+  const upstreamModel = getModelUpstreamId(provider, model) || model;
+  const { model: _bodyModel, ...payload } = body;
+  const requestBody = inputEnvelope ? { model: upstreamModel, input: payload } : { ...body, model: upstreamModel };
 
   log?.debug?.("SYSTEMONE", `${provider.toUpperCase()} | ${model}`);
 
