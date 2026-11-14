@@ -6,8 +6,8 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/localDb";
-import { getModelInfo } from "../services/model.js";
-import { getKeyAccessContext, enforceKeyAccessResolved } from "../services/keyAccess.js";
+import { getModelInfo, getRouterCombo } from "../services/model.js";
+import { getKeyAccessContext, enforceKeyAccess, enforceKeyAccessResolved } from "../services/keyAccess.js";
 import { handleSystemoneCore } from "open-sse/handlers/systemoneCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -68,6 +68,33 @@ export async function handleSystemone(request) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: questions");
   }
 
+  // A router combo (kind "systemone"): try its members in order and return the first answer.
+  // The access decision is made once, on the combo; an allowed combo grants its members.
+  const routerCombo = await getRouterCombo(modelStr);
+  if (routerCombo) {
+    const keyAccessDenied = await enforceKeyAccess(await getKeyAccessContext(request), modelStr);
+    if (keyAccessDenied) return keyAccessDenied;
+    const members = (routerCombo.models || []).filter((m) => typeof m === "string" && m.trim());
+    if (members.length === 0) {
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, `Router combo "${modelStr}" has no models`);
+    }
+    let last = null;
+    for (let i = 0; i < members.length; i++) {
+      log.info("COMBO", `systemone ${modelStr} ${i + 1}/${members.length}: ${members[i]}`);
+      last = await runSystemoneModel({ body, modelStr: members[i].trim(), request, apiKey, pathname: url.pathname, checkAccess: false });
+      if (last.ok) return last;
+      log.warn("COMBO", `systemone ${modelStr} ${i + 1}/${members.length} ${members[i]} failed (${last.status})`);
+    }
+    return last;
+  }
+
+  return runSystemoneModel({ body, modelStr, request, apiKey, pathname: url.pathname, checkAccess: true });
+}
+
+/**
+ * Run one System One model with the account-fallback loop and return its Response.
+ */
+async function runSystemoneModel({ body, modelStr, request, apiKey, pathname, checkAccess }) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) {
     log.warn("SYSTEMONE", "Invalid model format", { model: modelStr });
@@ -77,8 +104,10 @@ export async function handleSystemone(request) {
   const { provider, model } = modelInfo;
 
   // Per-key access control: checked before any credential lookup.
-  const keyAccessDenied = await enforceKeyAccessResolved(await getKeyAccessContext(request), modelStr, provider, model);
-  if (keyAccessDenied) return keyAccessDenied;
+  if (checkAccess) {
+    const keyAccessDenied = await enforceKeyAccessResolved(await getKeyAccessContext(request), modelStr, provider, model);
+    if (keyAccessDenied) return keyAccessDenied;
+  }
 
   if (modelStr !== `${provider}/${model}`) {
     log.info("ROUTING", `${modelStr} → ${provider}/${model}`);
@@ -131,7 +160,7 @@ export async function handleSystemone(request) {
           model,
           connectionId: credentials.connectionId,
           apiKey,
-          endpoint: url.pathname,
+          endpoint: pathname,
           tokens: {
             ...result.usage,
             total_tokens: result.usage.prompt_tokens + result.usage.completion_tokens,

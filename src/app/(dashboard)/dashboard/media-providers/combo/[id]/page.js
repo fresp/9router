@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Card, Button, Input, Toggle, ModelSelectModal } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
+import { isRouterCombo } from "@/shared/constants/comboKinds.js";
 
 // Parse "providerId/model" or just "providerId" → { providerId, model }
 function parseModelEntry(entry) {
@@ -22,6 +23,7 @@ const KIND_LABELS = {
   webFetch: "Web Fetch",
   image: "Text to Image",
   tts: "Text To Speech",
+  systemone: "System One Router",
 };
 
 const EXAMPLE_PATHS = {
@@ -29,6 +31,7 @@ const EXAMPLE_PATHS = {
   webFetch: "/v1/web/fetch",
   image: "/v1/images/generations",
   tts: "/v1/audio/speech",
+  systemone: "/v1/systemone",
 };
 
 const EXAMPLE_BODIES = {
@@ -36,6 +39,7 @@ const EXAMPLE_BODIES = {
   webFetch: (n) => ({ model: n, url: "https://example.com", format: "markdown" }),
   image: (n) => ({ model: n, prompt: "A cute cat playing piano", n: 1, size: "1024x1024" }),
   tts: (n) => ({ model: n, input: "Hello, this is a test.", voice: "alloy" }),
+  systemone: (n) => ({ model: n, state: "Rename a variable in one function.", questions: { route: { type: "choice", instructions: "Which option fits this request?", criteria: { fast: "Small single-file edits", deep: "Multi-file refactors and root-cause debugging" } } } }),
 };
 
 // Map combo.kind → listing route to go back to
@@ -268,13 +272,20 @@ export default function ComboDetailPage() {
             <Input label="Combo Name" value={name} onChange={(e) => { setName(e.target.value); validateName(e.target.value); }} onBlur={handleSaveName} error={nameError} />
             <p className="text-[10px] text-text-muted mt-0.5">Only letters, numbers, -, _ and .</p>
           </div>
-          <div className="flex items-center justify-between">
+          {isRouterCombo(combo) ? (
             <div>
-              <p className="text-sm font-medium">Round Robin</p>
-              <p className="text-xs text-text-muted">Rotate providers across requests instead of strict fallback order.</p>
+              <p className="text-sm font-medium">Fallback order</p>
+              <p className="text-xs text-text-muted">Routers are asked in this order. The next one is tried only when a router cannot be reached (quota, balance, timeout); a low-confidence answer is kept. Pick this combo as the Router of a Smart Router combo.</p>
             </div>
-            <Toggle checked={roundRobin} onChange={handleToggleRoundRobin} />
-          </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Round Robin</p>
+                <p className="text-xs text-text-muted">Rotate providers across requests instead of strict fallback order.</p>
+              </div>
+              <Toggle checked={roundRobin} onChange={handleToggleRoundRobin} />
+            </div>
+          )}
         </div>
       </Card>
 
@@ -283,7 +294,7 @@ export default function ComboDetailPage() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
           <div>
             <h2 className="text-lg font-semibold">Providers</h2>
-            <p className="text-xs text-text-muted">Tried in order (top-down) or rotated when round-robin is on.</p>
+            <p className="text-xs text-text-muted">{isRouterCombo(combo) ? "Asked in order (top-down)." : "Tried in order (top-down) or rotated when round-robin is on."}</p>
           </div>
           <Button size="sm" icon="add" onClick={() => setShowPicker(true)}>Add Provider</Button>
         </div>

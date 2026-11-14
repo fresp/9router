@@ -8,9 +8,10 @@ import ProviderIcon from "@/shared/components/ProviderIcon";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
 
 // Kinds that support combos (currently disabled for image/tts — temporarily hidden).
-// webSearch/webFetch handled by /web page.
-const COMBO_KINDS = new Set([]);
-const COMBO_BASE_NAMES = { image: "image-combo", tts: "tts-combo" };
+// webSearch/webFetch handled by /web page. A System One combo is a router combo: an ordered
+// list of router models that smart-routed chat combos can name as their router.
+const COMBO_KINDS = new Set(["systemone"]);
+const COMBO_BASE_NAMES = { image: "image-combo", tts: "tts-combo", systemone: "router-combo" };
 
 function getEffectiveStatus(conn) {
   const isCooldown = Object.entries(conn).some(

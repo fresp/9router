@@ -9,7 +9,8 @@ import {
 } from "../services/auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
-import { getModelInfo, getComboModels, parseModel } from "../services/model.js";
+import { getModelInfo, getComboModels, getRouterCombo, parseModel } from "../services/model.js";
+import { routerComboAsChatMessage } from "@/shared/constants/comboKinds.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
@@ -108,6 +109,12 @@ export async function handleChat(request, clientRawRequest = null) {
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
+  // A router combo holds System One models; they answer routing questions, not chat.
+  if (await getRouterCombo(modelStr)) {
+    log.warn("CHAT", `"${modelStr}" is a System One router combo, not a chat model`);
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, routerComboAsChatMessage(modelStr));
   }
 
   // Per-key access control: a restricted key may call only its listed combos and
@@ -241,6 +248,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
+    // Reached as a member of a chat combo: fail this member so the combo moves on.
+    if (await getRouterCombo(modelStr)) {
+      log.warn("CHAT", `"${modelStr}" is a System One router combo, not a chat model`);
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, routerComboAsChatMessage(modelStr));
+    }
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
       const chatSettings = await getSettings();
