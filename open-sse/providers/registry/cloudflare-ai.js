@@ -27,6 +27,7 @@ export default {
     thinkingFormat: "openai",
   },
   models: [
+    { id: "@cf/cloudflare/clef", name: "Clef", kind: "systemone", upstreamModelId: "clef" },
     { id: "@cf/cloudflare/clef-flash", name: "Clef Flash", kind: "systemone", upstreamModelId: "clef-flash" },
     // Third-party model: POST /ai/run with { model, input: { state, questions } }.
     { id: "typesafe/jev", name: "Jev 1.13", kind: "systemone", inputEnvelope: true },
