@@ -1,0 +1,10 @@
+[
+  { "name": "oca-code", "model": "oca-code", "key": "A" },
+  { "name": "oca-fast", "model": "oca-fast", "key": "A" },
+  { "name": "oca-plan", "model": "oca-plan", "key": "A" },
+  { "name": "glm-5.3-flash", "model": "glm-5.3-flash", "key": "A" },
+  { "name": "oca-deep", "model": "oca-deep", "key": "B" },
+  { "name": "gpt-6.1-sol", "model": "gpt-6.1-sol", "key": "B" },
+  { "name": "claude-opus-5-5", "model": "atp/claude-opus-5-5", "key": "B" },
+  { "name": "deepseek-v4.1-flash", "model": "deepseek-v4.1-flash", "key": "B" }
+]

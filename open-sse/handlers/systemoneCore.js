@@ -113,6 +113,13 @@ export async function handleSystemoneCore({
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Invalid JSON response from ${provider}`);
   }
 
+  // Cloudflare's /ai/run wraps the model output as { success, result: {...} }; callers read
+  // `answers` at the top level, as every other System One lane returns it.
+  const wrapped = responseBody?.result;
+  if (responseBody?.answers === undefined && wrapped && typeof wrapped === "object" && wrapped.answers !== undefined) {
+    responseBody = wrapped;
+  }
+
   if (onRequestSuccess) await onRequestSuccess();
 
   const usage = responseBody?.usage;

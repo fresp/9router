@@ -318,11 +318,14 @@ function getContentBlocksFromMessage(msg, toolNameMap = new Map()) {
         if (tc.type === OPENAI_BLOCK.FUNCTION) {
           // Apply prefix to tool name
           const toolName = CLAUDE_OAUTH_TOOL_PREFIX + tc.function.name;
+          // Claude requires an object. A no-argument call arrives with "" (and a cut-off stream
+          // with broken JSON), which would otherwise be forwarded as a string and rejected (400).
+          const parsedArgs = safeParseJSON(tc.function.arguments, null);
           blocks.push({
             type: CLAUDE_BLOCK.TOOL_USE,
             id: tc.id,
             name: toolName,
-            input: safeParseJSON(tc.function.arguments, tc.function.arguments)
+            input: parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs) ? parsedArgs : {}
           });
         }
       }
