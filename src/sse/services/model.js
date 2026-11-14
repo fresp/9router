@@ -2,6 +2,7 @@
 import { getModelAliases, getComboByName, getProviderNodes, getProviderConnections } from "@/lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
 import REGISTRY from "open-sse/providers/registry/index.js";
+import { isRouterCombo } from "@/shared/constants/comboKinds.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
@@ -91,6 +92,17 @@ export async function getComboModels(modelStr) {
     return combo.models;
   }
   return null;
+}
+
+/**
+ * The router combo (kind "systemone") with this name, or null. Its members are System One
+ * models, so it can be a smart-router model or a /v1/systemone target but never a chat model.
+ * @returns {Promise<object|null>}
+ */
+export async function getRouterCombo(modelStr) {
+  if (typeof modelStr !== "string" || !modelStr || modelStr.includes("/")) return null;
+  const combo = await getComboByName(modelStr);
+  return isRouterCombo(combo) ? combo : null;
 }
 
 // A bare `claude-*` id infers provider "anthropic" (API key). When no anthropic

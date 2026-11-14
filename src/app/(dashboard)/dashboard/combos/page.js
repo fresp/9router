@@ -10,6 +10,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { resolveProviderId, AI_PROVIDERS } from "@/shared/constants/providers";
+import { isRouterCombo } from "@/shared/constants/comboKinds.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -68,6 +69,7 @@ function getPolicyBadgeLabel(strategy = {}) {
 
 export default function CombosPage() {
   const [combos, setCombos] = useState([]);
+  const [routerCombos, setRouterCombos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCombo, setEditingCombo] = useState(null);
@@ -194,6 +196,8 @@ export default function CombosPage() {
 
       // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
       if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm"));
+      // Router combos (System One) are edited under Media Providers; here they are only named as a router.
+      if (combosRes.ok) setRouterCombos((combosData.combos || []).filter(isRouterCombo));
       if (providersRes.ok) {
         setActiveProviders((providersData.connections || []).filter((c) => c.isActive !== false));
       }
@@ -568,6 +572,7 @@ export default function CombosPage() {
                   getCaps={getCaps}
                   comboByName={comboByName}
                   activeProviders={activeProviders}
+                  routerCombos={routerCombos}
                   copied={copied}
                   onCopy={copy}
                   onEdit={() => setEditingCombo(combo)}
@@ -637,10 +642,28 @@ const fmtK = (n) => {
   return `${Math.round(n / 1000)}k`;
 };
 
-function getRouterModelStatus(routerModel, activeProviders) {
+function getRouterModelStatus(routerModel, activeProviders, routerCombos = []) {
   const effectiveModel = (typeof routerModel === "string" && routerModel.trim())
     ? routerModel.trim()
     : "oc/jev-1.13-free";
+
+  // A router combo is ready when at least one of its routers is; the chain lists every
+  // provider a prompt can reach, so a cross-provider fallback is never hidden behind the name.
+  const routerCombo = routerCombos.find((c) => c.name === effectiveModel);
+  if (routerCombo) {
+    const members = (routerCombo.models || []).map((m) => ({ model: m, status: getRouterModelStatus(m, activeProviders) }));
+    const ready = members.filter((m) => m.status.ready).length;
+    const providers = [...new Set(members.map((m) => m.status.providerId))];
+    return {
+      ready: ready > 0,
+      label: members.length === 0 ? "Empty" : `${ready}/${members.length} ready`,
+      providerId: members.find((m) => !m.status.ready)?.status.providerId || providers[0],
+      combo: routerCombo,
+      chain: members.map((m) => m.model),
+      providers,
+    };
+  }
+
   const slashIdx = effectiveModel.indexOf("/");
   const prefix = slashIdx !== -1 ? effectiveModel.slice(0, slashIdx) : effectiveModel;
   const providerId = resolveProviderId(prefix);
@@ -659,7 +682,7 @@ function getRouterModelStatus(routerModel, activeProviders) {
   return { ready: false, label: "Not configured", providerId };
 }
 
-function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, selected = false, onToggleSelect }) {
+function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], routerCombos = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, selected = false, onToggleSelect }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const [showRouterSelect, setShowRouterSelect] = useState(false);
   const [showPolicyModal, setShowPolicyModal] = useState(false);
@@ -745,7 +768,7 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
             )}
             {/* Smart: System One router picker and policy modal trigger */}
             {isSmart && (() => {
-              const routerStatus = getRouterModelStatus(routerModel, activeProviders);
+              const routerStatus = getRouterModelStatus(routerModel, activeProviders, routerCombos);
               const policyLabel = getPolicyBadgeLabel(strategy);
               return (
                 <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
@@ -764,7 +787,7 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
                     <span className="inline-flex items-center gap-1">
                       <Badge variant="error" size="sm" dot>{routerStatus.label}</Badge>
                       <Link
-                        href={`/dashboard/media-providers/systemone/${routerStatus.providerId}`}
+                        href={routerStatus.combo ? `/dashboard/media-providers/combo/${routerStatus.combo.id}` : `/dashboard/media-providers/systemone/${routerStatus.providerId}`}
                         className="text-[10px] text-primary hover:underline font-medium"
                         title="Configure in Media Providers"
                       >
@@ -788,6 +811,19 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
                     >
                       <span className="material-symbols-outlined text-[13px]">close</span>
                     </button>
+                  )}
+                  {routerStatus.chain && routerStatus.chain.length > 0 && (
+                    <span
+                      className="basis-full min-w-0 break-words font-mono text-[10px] text-text-muted"
+                      title="Routers are asked in this order; the next one only when a router cannot be reached"
+                    >
+                      {routerStatus.chain.join(" → ")}
+                      {routerStatus.providers.length > 1 && (
+                        <span className="ml-1.5 font-sans text-amber-600 dark:text-amber-400">
+                          · prompts can reach {routerStatus.providers.length} providers
+                        </span>
+                      )}
+                    </span>
                   )}
                 </div>
               );
@@ -868,6 +904,7 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
           activeProviders={activeProviders}
           title="Select System One Router Model"
           kindFilter="systemone"
+          showKindCombos
           addedModelValues={routerModel ? [routerModel] : []}
           closeOnSelect={true}
         />

@@ -13,6 +13,7 @@ import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS,
 import { parseSearchQuery, matchesSearch } from "@/shared/utils/modelSearchFilter";
 import { getDeactivatedProviderIds } from "@/shared/utils/connectionStatus";
 import { NO_AUTH_PROVIDER_IDS } from "@/shared/utils/selectableModels";
+import { isRouterCombo } from "@/shared/constants/comboKinds.js";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -89,6 +90,7 @@ export default function ModelSelectModal({
   addedModelValues = [],
   closeOnSelect = true,
   allowProviderWildcard = false,
+  showKindCombos = false,
 }) {
   // Live-fetched connections on modal open, fallback to activeProviders prop
   const [fetchedConnections, setFetchedConnections] = useState(null);
@@ -505,12 +507,17 @@ export default function ModelSelectModal({
   // Parse search query into structured query (regex, positive tokens, negative tokens)
   const parsedQuery = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);
 
-  // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
+  // Filter combos by search query. A typed picker hides combos, except where the caller asks
+  // for combos of that same kind (the smart-router picker lists System One router combos).
+  // Router combos never appear among chat models: they cannot answer a chat request.
   const filteredCombos = useMemo(() => {
-    if (kindFilter || capFilter) return [];
-    if (parsedQuery.isEmpty) return combos;
-    return combos.filter(c => matchesSearch(c.name, parsedQuery));
-  }, [combos, parsedQuery, kindFilter, capFilter]);
+    if (capFilter) return [];
+    let pool;
+    if (kindFilter) pool = showKindCombos ? combos.filter((c) => c.kind === kindFilter) : [];
+    else pool = combos.filter((c) => !isRouterCombo(c));
+    if (parsedQuery.isEmpty) return pool;
+    return pool.filter(c => matchesSearch(c.name, parsedQuery));
+  }, [combos, parsedQuery, kindFilter, capFilter, showKindCombos]);
 
   // Sort models alphabetically, with added models floated to top
   const sortModels = (models) => {
