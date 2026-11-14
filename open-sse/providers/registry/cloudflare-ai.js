@@ -28,7 +28,8 @@ export default {
   },
   models: [
     { id: "@cf/cloudflare/clef-flash", name: "Clef Flash", kind: "systemone", upstreamModelId: "clef-flash" },
-    { id: "typesafe/jev", name: "Jev 1.13", kind: "systemone" },
+    // Third-party model: POST /ai/run with { model, input: { state, questions } }.
+    { id: "typesafe/jev", name: "Jev 1.13", kind: "systemone", inputEnvelope: true },
     { id: "@cf/meta/llama-3.2-1b-instruct", name: "Llama 3.2 1B Instruct" },
     { id: "@cf/meta/llama-3.2-3b-instruct", name: "Llama 3.2 3B Instruct" },
     { id: "@cf/meta/llama-3.1-8b-instruct-fp8-fast", name: "Llama 3.1 8B Instruct FP8 Fast" },

@@ -1,7 +1,7 @@
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { PROVIDER_MEDIA } from "../providers/index.js";
-import { getModelUpstreamId } from "../config/providerModels.js";
+import { getModelMeta, getModelUpstreamId } from "../config/providerModels.js";
 import { generateSessionId } from "../executors/opencode-zen.js";
 
 const OPENCODE_PROVIDERS = new Set(["opencode", "opencode-zen"]);
@@ -57,6 +57,10 @@ export async function handleSystemoneCore({
     }
     targetUrl = targetUrl.replace("{accountId}", accountId);
   }
+  // A model flagged `inputEnvelope` uses the provider's generic run endpoint: the model is named
+  // in the body and the System One payload sits under `input` (Cloudflare third-party models).
+  const inputEnvelope = !!getModelMeta(provider, model)?.inputEnvelope;
+  if (inputEnvelope) targetUrl = targetUrl.replace("/{model}", "");
   if (targetUrl.includes("{model}")) {
     targetUrl = targetUrl.replace(/\{model\}/g, model);
   }
@@ -79,7 +83,9 @@ export async function handleSystemoneCore({
     ...(OPENCODE_PROVIDERS.has(provider) ? { "x-opencode-session": generateSessionId() } : {}),
   };
   // Cloudflare validates the body model as a short selector (e.g. "clef-flash"), not the full id.
-  const requestBody = { ...body, model: getModelUpstreamId(provider, model) || model };
+  const upstreamModel = getModelUpstreamId(provider, model) || model;
+  const { model: _bodyModel, ...payload } = body;
+  const requestBody = inputEnvelope ? { model: upstreamModel, input: payload } : { ...body, model: upstreamModel };
 
   log?.debug?.("SYSTEMONE", `${provider.toUpperCase()} | ${model}`);
 
