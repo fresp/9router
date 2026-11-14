@@ -1,0 +1,3 @@
+# Trivy configuration (auto-loaded from the working directory).
+# CI: .github/workflows/trivy.yml
+ignorefile: .trivyignore.yaml

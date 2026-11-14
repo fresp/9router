@@ -61,6 +61,8 @@ Thanks.md
 PUBLIC.en.md
 PR/*
 package-lock.json
+# The root lockfile is committed: the Docker build installs from it with `npm ci`.
+!/package-lock.json
 
 
 #Ignore vscode AI rules

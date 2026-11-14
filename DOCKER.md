@@ -121,6 +121,12 @@ docker run --rm -p 20128:20128 \
   9router
 ```
 
+The image installs dependencies with `npm ci` from the committed root `package-lock.json`, so every build resolves the same versions and verifies their integrity hashes. After changing `package.json` (including after syncing from upstream), refresh the lockfile and commit it — the build fails otherwise:
+
+```bash
+npm install --package-lock-only --ignore-scripts
+```
+
 The Dockerfile uses the official Alpine and npm registries by default. Regional mirrors can be supplied when needed:
 
 ```bash

@@ -3,6 +3,11 @@ ARG NODE_IMAGE=node:22.23.4-alpine
 ARG ALPINE_MIRROR=dl-cdn.alpinelinux.org
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 ARG APP_VERSION=unknown
+# npm bundled with the Node 22 image ships vulnerable transitive deps
+# (brace-expansion, ip-address, pacote, picomatch, sigstore — 10 HIGH in the
+# Trivy DB). The runtime still spawns npm (lazy runtime deps, updater), so it is
+# upgraded to a pinned release instead of removed.
+ARG NPM_VERSION=11.21.2
 
 FROM ${NODE_IMAGE} AS base
 ARG ALPINE_MIRROR
@@ -19,9 +24,12 @@ ARG NPM_REGISTRY
 
 RUN apk add --no-cache python3 make g++ linux-headers
 
-COPY package.json ./
+# Install exactly what package-lock.json pins (versions + integrity hashes).
+# `npm ci` fails when the lockfile is out of sync with package.json — refresh it
+# with `npm install --package-lock-only --ignore-scripts` and commit the result.
+COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
-    npm install \
+    npm ci \
       --registry="${NPM_REGISTRY}" \
       --fetch-retries=5 \
       --fetch-retry-factor=2 \
@@ -38,10 +46,13 @@ RUN npm run build
 # lazyRuntime.js via createRequire). Next standalone tracing does not include
 # them, so OpenCode Free fails with HTTP 502 ("resolve is undefined").
 # Install them (with their native bindings/transitive deps) in an isolated dir
-# so the runner stage can copy them into /app/node_modules.
+# so the runner stage can copy them into /app/node_modules. Versions come from
+# the lockfile so this second install cannot drift from the audited set.
+WORKDIR /opt/lazy-runtime
 RUN --mount=type=cache,target=/root/.npm \
-    mkdir -p /opt/lazy-runtime && cd /opt/lazy-runtime && \
     npm init -y >/dev/null && \
+    WREQ_JS_VERSION="$(node -p "require('/app/package-lock.json').packages['node_modules/wreq-js'].version")" && \
+    PLAYWRIGHT_CORE_VERSION="$(node -p "require('/app/package-lock.json').packages['node_modules/playwright-core'].version")" && \
     npm install --no-save \
       --registry="${NPM_REGISTRY}" \
       --fetch-retries=5 \
@@ -49,11 +60,13 @@ RUN --mount=type=cache,target=/root/.npm \
       --fetch-retry-mintimeout=10000 \
       --fetch-retry-maxtimeout=120000 \
       --fetch-timeout=300000 \
-      wreq-js playwright-core
+      "wreq-js@${WREQ_JS_VERSION}" "playwright-core@${PLAYWRIGHT_CORE_VERSION}"
 
 FROM ${NODE_IMAGE} AS runner
 ARG ALPINE_MIRROR
 ARG APP_VERSION
+ARG NPM_REGISTRY
+ARG NPM_VERSION
 WORKDIR /app
 
 RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
@@ -95,11 +108,17 @@ RUN mkdir -p /app/data && chown -R node:node /app && \
 
 # Avoid a full distribution upgrade in the runtime image. It makes builds less
 # reproducible and is unrelated to installing the runtime entrypoint helper.
-RUN apk add --no-cache su-exec ffmpeg && \
+# zlib is upgraded explicitly (CVE-2026-4738, fixed in 1.4-r0).
+RUN apk add --no-cache --upgrade su-exec ffmpeg zlib && \
+  npm install -g --no-audit --no-fund --registry="${NPM_REGISTRY}" "npm@${NPM_VERSION}" && \
+  npm cache clean --force && rm -rf /root/.npm && \
   printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
   chmod +x /entrypoint.sh
 
 EXPOSE 20128
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT}/api/health" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "custom-server.js"]
