@@ -107,7 +107,9 @@ export async function resolveSmartChoice({
     }
 
     if (!result?.success || !result.response) {
-      log?.warn?.("COMBO", `smart-router: evaluation failed (${result?.status || "error"})`);
+      // The upstream text says which field or permission was rejected; the status alone does not.
+      const detail = typeof result?.error === "string" ? result.error.replace(/\s+/g, " ").trim().slice(0, 300) : "";
+      log?.warn?.("COMBO", `smart-router: evaluation failed (${result?.status || "error"})${detail ? `: ${detail}` : ""}`);
       return noDecision(Number.isInteger(result?.status) ? `http_${result.status}` : "upstream_error");
     }
 
