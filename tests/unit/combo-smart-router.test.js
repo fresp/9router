@@ -10,6 +10,7 @@ import {
 
 import {
   extractPromptState,
+  stripInjectedContext,
   buildChoiceCriteria,
   deriveRoutingSessionId,
   resolveRouteInstructions,
@@ -99,6 +100,52 @@ describe("System One Smart Combo Router", () => {
           { role: "user", content: [{ type: "tool_result", tool_use_id: "1", content: "file contents" }] },
         ],
       })).toBe("Fix the bug");
+    });
+
+    it("ignores Claude Code system-reminders ahead of the task", () => {
+      const reminder = `<system-reminder>\n# claudeMd\n${"Architecture, security and migrations notes. ".repeat(100)}\n</system-reminder>`;
+      const body = {
+        messages: [
+          { role: "user", content: [{ type: "text", text: reminder }, { type: "text", text: "Rename foo to bar in utils.js" }] },
+          { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] },
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "t1", content: "file contents" },
+              { type: "text", text: "<system-reminder>Todo list is empty</system-reminder>" },
+            ],
+          },
+        ],
+      };
+      expect(extractPromptState(body)).toBe("Rename foo to bar in utils.js");
+    });
+
+    it("skips Cline-style tool results sent as user text", () => {
+      const body = {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "<task>\nAdd a retry to the fetch helper\n</task>" }, { type: "text", text: "<environment_details>\n# Current files\nsrc/a.js\n</environment_details>" }] },
+          { role: "assistant", content: "<read_file><path>src/a.js</path></read_file>" },
+          { role: "user", content: [{ type: "text", text: "[read_file for 'src/a.js'] Result:" }, { type: "text", text: "export function a() {}" }, { type: "text", text: "<environment_details>\nVisible files\n</environment_details>" }] },
+        ],
+      };
+      expect(extractPromptState(body)).toBe("<task>\nAdd a retry to the fetch helper\n</task>");
+    });
+
+    it("ignores Codex AGENTS.md and environment context items", () => {
+      const body = {
+        input: [
+          { type: "message", role: "user", content: [{ type: "input_text", text: "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nSecurity first.\n</INSTRUCTIONS>" }] },
+          { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>\n<cwd>/repo</cwd>\n</environment_context>" }] },
+        ],
+      };
+      // No task text at all: fall back to the latest user text as before
+      expect(extractPromptState(body)).toBe("<environment_context>\n<cwd>/repo</cwd>\n</environment_context>");
+      body.input.push({ type: "message", role: "user", content: [{ type: "input_text", text: "Fix the flaky login test" }] });
+      expect(extractPromptState(body)).toBe("Fix the flaky login test");
+    });
+
+    it("strips an unclosed injected block to the end of the part", () => {
+      expect(stripInjectedContext("Do the thing <system-reminder>cut off here")).toBe("Do the thing");
     });
 
     it("reads Gemini contents", () => {

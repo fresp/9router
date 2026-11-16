@@ -37,7 +37,17 @@ export function extractPromptState(body, maxChars = MAX_STATE_CHARS) {
   const messages = requestTurns(body);
 
   if (messages && messages.length > 0) {
-    // Find the latest user message
+    // Latest user turn that states a task, with client-injected context removed.
+    // Coding agents put project context ahead of the request (Claude Code system-reminders,
+    // Cline environment_details, Codex AGENTS.md) and send tool output as user text, so the
+    // raw latest user text is often context the router would read as the request.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!isUserTurn(msg)) continue;
+      const task = turnTaskText(msg);
+      if (task) return task.slice(0, maxChars);
+    }
+    // No task text found: fall back to the latest user text as-is
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (isUserTurn(msg)) {
@@ -61,6 +71,51 @@ export function extractPromptState(body, maxChars = MAX_STATE_CHARS) {
   }
 
   return "";
+}
+
+/**
+ * Tags coding agents wrap injected context in. Their content describes the project or
+ * environment, not the user's request: Claude Code `system-reminder`, Cline/Roo/Kilo
+ * `environment_details`, Codex `environment_context`, `user_instructions` and AGENTS.md
+ * `INSTRUCTIONS`.
+ */
+export const INJECTED_CONTEXT_TAGS = ["system-reminder", "environment_details", "environment_context", "user_instructions", "INSTRUCTIONS"];
+
+const INJECTED_TAG_GROUP = INJECTED_CONTEXT_TAGS.join("|");
+// A closed block, or an unclosed one cut off by the client: strip to the end of the part
+const INJECTED_BLOCK_RE = new RegExp(`<(${INJECTED_TAG_GROUP})(?:\\s[^>]*)?>[\\s\\S]*?(?:</\\1>|$)`, "g");
+// Codex heading in front of the AGENTS.md <INSTRUCTIONS> block
+const AGENTS_MD_HEADING_RE = /^#\s*AGENTS\.md instructions for[^\n]*$/gm;
+// Tool output sent back as user text (Cline/Roo/Kilo): "[read_file for 'a.js'] Result:"
+const TEXT_TOOL_RESULT_RE = /^\s*\[[^\]\n]{1,200}\]\s+Result:/;
+
+/**
+ * Remove client-injected context from a piece of user text.
+ *
+ * @param {string} text - Raw user text
+ * @returns {string} Text without injected context, trimmed
+ */
+export function stripInjectedContext(text) {
+  if (typeof text !== "string" || !text) return "";
+  return text.replace(INJECTED_BLOCK_RE, " ").replace(AGENTS_MD_HEADING_RE, " ").trim();
+}
+
+// The user's own words in a turn: injected context removed, and nothing when the turn
+// carries tool output sent as text.
+function turnTaskText(msg) {
+  const content = msg?.content ?? msg?.text ?? msg?.parts;
+  const parts = typeof content === "string" ? [content] : Array.isArray(content) ? content : [];
+  const texts = [];
+  for (const part of parts) {
+    const text = typeof part === "string"
+      ? part
+      : (typeof part?.text === "string" && (part.type === undefined || TEXT_PART_TYPES.has(part.type)) ? part.text : "");
+    if (!text) continue;
+    if (TEXT_TOOL_RESULT_RE.test(text)) return "";
+    const stripped = stripInjectedContext(text);
+    if (stripped) texts.push(stripped);
+  }
+  return texts.join(" ").trim();
 }
 
 // Text part types across client formats: chat/Claude "text", Responses "input_text"/"output_text".
