@@ -542,6 +542,54 @@ describe("System One Smart Combo Router", () => {
       expect(calls[0]).toBe("cx/gpt-5-mini");
     });
 
+    it("pins the configured default on low confidence so later turns keep it", async () => {
+      const models = ["cx/gpt-5-mini", "ds/deepseek-v4"];
+      const calls = [];
+      const seen = [];
+      const handleSingleModel = vi.fn(async (_body, model) => {
+        calls.push(model);
+        return okResponse(`Answer from ${model}`);
+      });
+      const resolveSmartChoice = vi.fn()
+        .mockResolvedValueOnce({ choice: "ds/deepseek-v4", confidence: 0.5 })
+        .mockResolvedValueOnce({ choice: "ds/deepseek-v4", confidence: 0.6 })
+        .mockResolvedValueOnce({ choice: "ds/deepseek-v4", confidence: 0.9 });
+      const common = {
+        models, handleSingleModel, log, comboName: "pin-combo", comboStrategy: "smart",
+        sessionId: "session-pin", confidenceThreshold: 0.8, resolveSmartChoice,
+        onRouteAttempt: (route) => seen.push(route.route),
+      };
+
+      // Turn 1: low confidence -> configured default, pinned
+      await handleComboChat({ ...common, body: { messages: [{ role: "user", content: "t1" }] } });
+      expect(getStickyComboModel("pin-combo", "session-pin", models)).toBe("cx/gpt-5-mini");
+
+      // Turn 2: still unsure -> pinned default kept
+      await handleComboChat({ ...common, body: { messages: [{ role: "user", content: "t2" }] } });
+
+      // Turn 3: confident decision -> switch and re-pin
+      await handleComboChat({ ...common, body: { messages: [{ role: "user", content: "t3" }] } });
+
+      expect(calls).toEqual(["cx/gpt-5-mini", "cx/gpt-5-mini", "ds/deepseek-v4"]);
+      expect(seen).toEqual(["low_confidence", "kept", "routed"]);
+      expect(getStickyComboModel("pin-combo", "session-pin", models)).toBe("ds/deepseek-v4");
+    });
+
+    it("does not pin on low confidence for per-turn policy or without a session", async () => {
+      const models = ["cx/gpt-5-mini", "ds/deepseek-v4"];
+      const handleSingleModel = vi.fn(async () => okResponse("ok"));
+      const resolveSmartChoice = vi.fn(async () => ({ choice: "ds/deepseek-v4", confidence: 0.5 }));
+      const body = { messages: [{ role: "user", content: "x" }] };
+
+      await handleComboChat({ body, models, handleSingleModel, log, comboName: "pin-pt", comboStrategy: "smart",
+        sessionId: "s-pt", smartPolicy: "per-turn", resolveSmartChoice });
+      expect(getStickyComboModel("pin-pt", "s-pt", models)).toBeNull();
+
+      await handleComboChat({ body, models, handleSingleModel, log, comboName: "pin-nosess", comboStrategy: "smart",
+        resolveSmartChoice });
+      expect(resolveSmartChoice).toHaveBeenCalledTimes(2);
+    });
+
     it("supports strict lock policy: never calls router on subsequent turns", async () => {
       const calls = [];
       const handleSingleModel = vi.fn(async (_body, model) => {
