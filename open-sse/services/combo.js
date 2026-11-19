@@ -448,6 +448,13 @@ export async function handleComboChat({
             routeOutcome = "low_confidence";
             routeReason = null;
             log.info("COMBO", `smart-router confidence (${conf}) below threshold (${switchThreshold}), fallback to order: [${models.join(", ")}]`);
+            // Pin the configured default so later turns keep it (warm prompt cache) and only
+            // switch on a confident decision, instead of re-routing the session every turn.
+            // A router failure is not pinned: an outage must not lock the session.
+            if (!isPerTurn && sessionId) {
+              setStickyComboModel(comboName, sessionId, models[0]);
+              activeStickyModel = models[0];
+            }
           } else {
             rotatedModels = orderModelsByChoice(models, smartResult);
             routeOutcome = "routed";
