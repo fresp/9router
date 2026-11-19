@@ -330,6 +330,11 @@ export default function RequestDetailsTab() {
                     </td>
                     <td className="max-w-[260px] truncate p-4 font-mono text-sm text-text-main">
                       {detail.model}
+                      {detail.combo && (
+                        <div className="truncate font-sans text-xs text-text-muted" title={detail.comboVia ? `${detail.combo} → ${detail.comboVia}` : detail.combo}>
+                          via {detail.combo}{detail.comboVia ? ` → ${detail.comboVia}` : ""}
+                        </div>
+                      )}
                     </td>
                     <td className="max-w-[180px] truncate p-4 text-sm text-text-main">
                        <span className="font-medium">
@@ -408,6 +413,14 @@ export default function RequestDetailsTab() {
                 <span className="text-text-muted">Model:</span>{" "}
                 <span className="text-text-main font-mono">{selectedDetail.model}</span>
               </div>
+              {selectedDetail.combo && (
+                <div>
+                  <span className="text-text-muted">Combo:</span>{" "}
+                  <span className="text-text-main font-mono">
+                    {selectedDetail.combo}{selectedDetail.comboVia ? ` → ${selectedDetail.comboVia}` : ""}
+                  </span>
+                </div>
+              )}
               <div>
                 <span className="text-text-muted">Status:</span>{" "}
                 <span className={cn(
