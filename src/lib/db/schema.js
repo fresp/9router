@@ -160,9 +160,12 @@ export const TABLES = {
       data: "TEXT NOT NULL",
       // apiKeys.id of the client key that sent the request (never the key itself).
       apiKeyId: "TEXT",
+      // Outermost combo the request was routed through; NULL = direct model request.
+      combo: "TEXT",
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_rd_key ON requestDetails(apiKeyId)",
+      "CREATE INDEX IF NOT EXISTS idx_rd_combo ON requestDetails(combo)",
       "CREATE INDEX IF NOT EXISTS idx_rd_ts ON requestDetails(timestamp DESC)",
       "CREATE INDEX IF NOT EXISTS idx_rd_provider ON requestDetails(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rd_model ON requestDetails(model)",

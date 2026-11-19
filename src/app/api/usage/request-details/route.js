@@ -4,7 +4,8 @@ import { getApiKeys, getApiKeyGroups } from "@/lib/localDb";
 
 /**
  * GET /api/usage/request-details
- * Query parameters: page, pageSize (1-100), provider, model, connectionId, status, apiKeyId, startDate, endDate
+ * Query parameters: page, pageSize (1-100), provider, model, connectionId, status, apiKeyId, combo, startDate, endDate
+ * (combo: a combo name, or "__direct__" for requests sent straight to a model)
  */
 export async function GET(request) {
   try {
@@ -19,6 +20,7 @@ export async function GET(request) {
     const connectionId = searchParams.get("connectionId");
     const status = searchParams.get("status");
     const apiKeyId = searchParams.get("apiKeyId");
+    const combo = searchParams.get("combo");
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
     
@@ -46,6 +48,7 @@ export async function GET(request) {
     if (connectionId) filter.connectionId = connectionId;
     if (status) filter.status = status;
     if (apiKeyId) filter.apiKeyId = apiKeyId;
+    if (combo) filter.combo = combo;
     if (startDate) filter.startDate = startDate;
     if (endDate) filter.endDate = endDate;
     

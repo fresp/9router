@@ -95,6 +95,9 @@ export function buildRequestDetail(base, overrides = {}) {
     providerResponse: base.providerResponse || null,
     response: base.response || {},
     pxpipe: base.pxpipe || undefined,
+    // Combo the request was routed through (outermost) and the nested hop, if any
+    combo: typeof base.clientRawRequest?.combo === "string" ? base.clientRawRequest.combo : undefined,
+    comboVia: typeof base.clientRawRequest?.comboVia === "string" ? base.clientRawRequest.comboVia : undefined,
     status: base.status || "success",
     ...overrides
   };

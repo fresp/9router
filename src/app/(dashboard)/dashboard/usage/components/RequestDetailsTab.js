@@ -7,6 +7,7 @@ import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
+import { DIRECT_COMBO_FILTER } from "@/shared/constants/comboKinds";
 import { getInputTokens, getOutputTokens, getCachedTokens, getCacheCreationTokens } from "./tokenDisplay";
 
 let providerNameCache = null;
@@ -97,9 +98,11 @@ export default function RequestDetailsTab() {
   const [providers, setProviders] = useState([]);
   const [providerNameCache, setProviderNameCache] = useState(null);
   const [apiKeys, setApiKeys] = useState([]);
+  const [combos, setCombos] = useState([]);
   const [filters, setFilters] = useState({
     provider: "",
     apiKeyId: "",
+    combo: "",
     startDate: "",
     endDate: ""
   });
@@ -125,6 +128,15 @@ export default function RequestDetailsTab() {
     } catch (error) {
       console.error("Failed to fetch API keys:", error);
     }
+    try {
+      const res = await fetch("/api/usage/combos");
+      if (res.ok) {
+        const data = await res.json();
+        setCombos(data.combos || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch combos:", error);
+    }
   }, []);
 
   const fetchDetails = useCallback(async () => {
@@ -136,6 +148,7 @@ export default function RequestDetailsTab() {
       });
       if (filters.provider) params.append("provider", filters.provider);
       if (filters.apiKeyId) params.append("apiKeyId", filters.apiKeyId);
+      if (filters.combo) params.append("combo", filters.combo);
       if (filters.startDate) params.append("startDate", filters.startDate);
       if (filters.endDate) params.append("endDate", filters.endDate);
 
@@ -173,13 +186,13 @@ export default function RequestDetailsTab() {
   };
 
   const handleClearFilters = () => {
-    setFilters({ provider: "", apiKeyId: "", startDate: "", endDate: "" });
+    setFilters({ provider: "", apiKeyId: "", combo: "", startDate: "", endDate: "" });
   };
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <Card padding="md">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
           <div className="flex min-w-0 flex-col gap-2">
             <label htmlFor="provider-filter" className="text-sm font-medium text-text-main">Provider</label>
             <select
@@ -221,6 +234,30 @@ export default function RequestDetailsTab() {
               <option value="">All API Keys</option>
               {apiKeys.map((k) => (
                 <option key={k.id} value={k.id}>{k.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-2">
+            <label htmlFor="combo-filter" className="text-sm font-medium text-text-main">Combo</label>
+            <select
+              id="combo-filter"
+              value={filters.combo}
+              onChange={(e) => {
+                setFilters({ ...filters, combo: e.target.value });
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
+              className={cn(
+                "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
+                "text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20",
+                "w-full min-w-0 cursor-pointer"
+              )}
+              style={{ colorScheme: 'auto' }}
+            >
+              <option value="">All Combos</option>
+              <option value={DIRECT_COMBO_FILTER}>Direct (no combo)</option>
+              {combos.map((c) => (
+                <option key={c} value={c}>{c}</option>
               ))}
             </select>
           </div>
@@ -330,6 +367,11 @@ export default function RequestDetailsTab() {
                     </td>
                     <td className="max-w-[260px] truncate p-4 font-mono text-sm text-text-main">
                       {detail.model}
+                      {detail.combo && (
+                        <div className="truncate font-sans text-xs text-text-muted" title={detail.comboVia ? `${detail.combo} → ${detail.comboVia}` : detail.combo}>
+                          via {detail.combo}{detail.comboVia ? ` → ${detail.comboVia}` : ""}
+                        </div>
+                      )}
                     </td>
                     <td className="max-w-[180px] truncate p-4 text-sm text-text-main">
                        <span className="font-medium">
@@ -408,6 +450,14 @@ export default function RequestDetailsTab() {
                 <span className="text-text-muted">Model:</span>{" "}
                 <span className="text-text-main font-mono">{selectedDetail.model}</span>
               </div>
+              {selectedDetail.combo && (
+                <div>
+                  <span className="text-text-muted">Combo:</span>{" "}
+                  <span className="text-text-main font-mono">
+                    {selectedDetail.combo}{selectedDetail.comboVia ? ` → ${selectedDetail.comboVia}` : ""}
+                  </span>
+                </div>
+              )}
               <div>
                 <span className="text-text-muted">Status:</span>{" "}
                 <span className={cn(
