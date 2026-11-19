@@ -8,3 +8,6 @@ export const isRouterCombo = (combo) => combo?.kind === COMBO_KIND_SYSTEMONE;
 
 export const routerComboAsChatMessage = (name) =>
   `"${name}" is a System One router combo. Use it as a combo's router model or on /v1/systemone, not as a chat model.`;
+
+// Request-details filter value for requests sent straight to a model (no combo).
+export const DIRECT_COMBO_FILTER = "__direct__";

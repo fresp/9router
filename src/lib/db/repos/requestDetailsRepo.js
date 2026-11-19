@@ -1,5 +1,6 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { DIRECT_COMBO_FILTER } from "@/shared/constants/comboKinds.js";
 
 const DEFAULT_MAX_RECORDS = 200;
 const DEFAULT_BATCH_SIZE = 20;
@@ -154,8 +155,8 @@ async function flushToDatabase() {
           };
 
           db.run(
-            `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data, apiKeyId) VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data, apiKeyId = excluded.apiKeyId`,
-            [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record), record.apiKeyId || null]
+            `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data, apiKeyId, combo) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data, apiKeyId = excluded.apiKeyId, combo = excluded.combo`,
+            [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record), record.apiKeyId || null, record.combo || null]
           );
         }
 
@@ -204,6 +205,9 @@ export async function getRequestDetails(filter = {}) {
   if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
   if (filter.status) { conds.push("status = ?"); params.push(filter.status); }
   if (filter.apiKeyId) { conds.push("apiKeyId = ?"); params.push(filter.apiKeyId); }
+  // combo: a combo name, or DIRECT_COMBO_FILTER for requests sent straight to a model
+  if (filter.combo === DIRECT_COMBO_FILTER) conds.push("combo IS NULL");
+  else if (filter.combo) { conds.push("combo = ?"); params.push(filter.combo); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
   if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
 
@@ -232,6 +236,12 @@ export async function getDistinctProviders() {
   const db = await getAdapter();
   const rows = db.all(`SELECT DISTINCT provider FROM requestDetails WHERE provider IS NOT NULL ORDER BY provider ASC`);
   return rows.map((r) => r.provider);
+}
+
+export async function getDistinctCombos() {
+  const db = await getAdapter();
+  const rows = db.all(`SELECT DISTINCT combo FROM requestDetails WHERE combo IS NOT NULL ORDER BY combo ASC`);
+  return rows.map((r) => r.combo);
 }
 
 export async function getRequestDetailById(id) {

@@ -53,3 +53,39 @@ describe("request details: combo", () => {
     expect(saved.comboVia).toBeUndefined();
   });
 });
+
+describe("request details: combo filter", () => {
+  async function seed() {
+    delete global._dbAdapter;
+    vi.resetModules();
+    const repo = await import("@/lib/db/repos/requestDetailsRepo.js");
+    const route = await import("@/app/api/usage/request-details/route.js");
+    const combosRoute = await import("@/app/api/usage/combos/route.js");
+    await repo.saveRequestDetail(buildRequestDetail({ ...base, clientRawRequest: { combo: "dpe" } }, { id: "a" }));
+    await repo.saveRequestDetail(buildRequestDetail({ ...base, clientRawRequest: { combo: "dpe", comboVia: "inner" } }, { id: "b" }));
+    await repo.saveRequestDetail(buildRequestDetail({ ...base, clientRawRequest: { combo: "fast" } }, { id: "c" }));
+    await repo.saveRequestDetail(buildRequestDetail({ ...base, clientRawRequest: {} }, { id: "d" }));
+    await repo.__test__.flush();
+    return { repo, route, combosRoute };
+  }
+  const ids = (r) => r.details.map((d) => d.id).sort();
+
+  it("filters by outer combo, including nested hops under it", async () => {
+    const { repo } = await seed();
+    expect(ids(await repo.getRequestDetails({ combo: "dpe" }))).toEqual(["a", "b"]);
+    expect(ids(await repo.getRequestDetails({ combo: "fast" }))).toEqual(["c"]);
+  });
+
+  it("__direct__ matches only requests without a combo", async () => {
+    const { repo } = await seed();
+    expect(ids(await repo.getRequestDetails({ combo: "__direct__" }))).toEqual(["d"]);
+    expect(ids(await repo.getRequestDetails({}))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("API passes the combo param and lists distinct combos", async () => {
+    const { route, combosRoute } = await seed();
+    const res = await route.GET(new Request("http://localhost/api/usage/request-details?combo=dpe"));
+    expect(ids(await res.json())).toEqual(["a", "b"]);
+    expect(await (await combosRoute.GET()).json()).toEqual({ combos: ["dpe", "fast"] });
+  });
+});
